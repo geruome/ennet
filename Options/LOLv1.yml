@@ -7,7 +7,7 @@ scale: 1
 
 manual_seed: 42
 
-ensemble_models: ['retinexformer', 'cidnet', 'glare', 'lytnet', 'lmt'] # 'retinexformer', 'cidnet', 'glare', 'lytnet', 'flw', 'lmt'
+ensemble_models: ['retinexformer', 'cidnet', 'glare', 'flw', 'lmt'] # 'retinexformer', 'cidnet', 'glare', 'lytnet', 'flw', 'lmt'
 dataset_name: LOLv2s
 # weight_path: pretrained_weights/best_psnr_26.95_25000.pth
 
@@ -96,7 +96,7 @@ train:
 # validation settings
 val:
   # window_size: 4
-  val_freq: !!float 2000
+  val_freq: !!float 3000
   save_img: true
   rgb2bgr: true
   use_image: true # ????
