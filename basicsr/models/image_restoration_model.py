@@ -168,6 +168,7 @@ class ImageCleanModel(BaseModel):
         # assert data['hqs'].device == self.device
         self.hqs = data['hqs'].to(self.device)
         self.lq = data['lq'].to(self.device)
+        self.metrics = data['metrics'].to(self.device)
         if 'gt' in data:
             self.gt = data['gt'].to(self.device)
         # if self.mixing_flag:
@@ -186,10 +187,8 @@ class ImageCleanModel(BaseModel):
         loss_dict = OrderedDict()
         # pixel loss
         l_pix = self.cri_pix(pred, self.gt)
-        metrics = calculate_psnr_tensor(self.hqs, self.gt)
-        # stx()
-        # metrics = norm(metrics)
-        l_moe = F.kl_div(moe_w.log(), F.softmax(metrics, dim=-1))
+        # metrics = calculate_psnr_tensor(self.hqs, self.gt)
+        l_moe = F.kl_div(moe_w.log(), F.softmax(self.metrics, dim=-1))
         loss = l_pix + self.lambda_moe*l_moe
         loss.backward()
         if self.opt['train']['use_grad_clip']:

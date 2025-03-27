@@ -271,6 +271,7 @@ def main():
                 train_data['lq'] = train_data['lq'][indices]
                 train_data['gt'] = train_data['gt'][indices]
                 train_data['hqs'] = train_data['hqs'][indices]
+                train_data['metrics'] = train_data['metrics'][indices]
             # if mini_gt_size < gt_size:
             #     x0 = int((gt_size - mini_gt_size) * random.random())
             #     y0 = int((gt_size - mini_gt_size) * random.random())
