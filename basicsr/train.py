@@ -141,7 +141,6 @@ def main():
 
     # parse options, set distributed setting, set ramdom seed
     opt = parse_options(is_train=True)
-    
     # 加速
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.deterministic = True

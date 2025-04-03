@@ -6,8 +6,8 @@ from PIL import Image
 import utils
 from pdb import set_trace as stx
 
-res_dir = '/root/autodl-tmp/ennet/ensemble_models/lmt/ensemble_output/LOLv2s'
-target_dir = '/root/autodl-tmp/ennet/datasets/LOLv2/Synthetic/Test/Normal'
+res_dir = '/root/autodl-tmp/ennet/ensemble_models/lmt/ensemble_output/SDSD_indoor'
+target_dir = '/root/autodl-tmp/ennet/datasets/SDSD_indoor/test/GT'
 
 res_names = os.listdir(res_dir)
 target_names = sorted(os.listdir(target_dir))

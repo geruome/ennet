@@ -168,7 +168,7 @@ class ImageCleanModel(BaseModel):
         # assert data['hqs'].device == self.device
         self.hqs = data['hqs'].to(self.device)
         self.lq = data['lq'].to(self.device)
-        self.metrics = data['metrics'].to(self.device)
+        # self.metrics = data['metrics'].to(self.device)
         if 'gt' in data:
             self.gt = data['gt'].to(self.device)
         # if self.mixing_flag:
@@ -187,7 +187,7 @@ class ImageCleanModel(BaseModel):
         loss_dict = OrderedDict()
         # pixel loss
         l_pix = self.cri_pix(pred, self.gt)
-        # metrics = calculate_psnr_tensor(self.hqs, self.gt)
+        self.metrics = calculate_psnr_tensor(self.hqs, self.gt)
         l_moe = F.kl_div(moe_w.log(), F.softmax(self.metrics, dim=-1))
         loss = l_pix + self.lambda_moe*l_moe
         loss.backward()
@@ -233,6 +233,7 @@ class ImageCleanModel(BaseModel):
         self.net_g.eval()
         dataset_name = dataloader.dataset.opt['name']
         with_metrics = self.opt['val'].get('metrics') is not None
+        save_prob = self.opt['val'].get('save_img_prob')
         if with_metrics:
             self.metric_results = {
                 metric: 0
@@ -273,7 +274,7 @@ class ImageCleanModel(BaseModel):
             torch.cuda.empty_cache()
             
             # save img
-            if save_img:
+            if save_img and idx<save_prob*len(dataloader):
                 if self.opt['is_train']:
                     save_img_path = osp.join(self.opt['path']['visualization'],
                                              img_name, f'{img_name}_{current_iter}.png')

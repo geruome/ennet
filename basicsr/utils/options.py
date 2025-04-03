@@ -3,6 +3,7 @@ from collections import OrderedDict
 from os import path as osp
 import os
 import torch
+from datetime import datetime
 
 def ordered_yaml():
     """Support OrderedDict for yaml.保证yaml中的OrderedDict是正确顺序
@@ -37,7 +38,10 @@ def parse(opt_path, is_train=True):
     opt['opt_path'] = opt_path
     opt['network_g']['num_models'] = len(opt['ensemble_models'])
     opt['is_train'] = is_train
-    opt['name'] = osp.basename(opt_path).split('.')[0]  # 获取文件名
+    # opt['name'] = osp.basename(opt_path).split('.')[0]  # 获取文件名
+    opt['name'] = f'{datetime.now().strftime("%m%d%H%M")}'
+    if 'exp_note' in opt:
+        opt['name'] += f'_{opt['exp_note']}'
     
     if opt.get('device', ""):
         device = opt['device']

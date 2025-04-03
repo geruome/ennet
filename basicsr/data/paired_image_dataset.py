@@ -75,21 +75,21 @@ class Dataset_PairedImage(data.Dataset):
         self.ensemble_models = opt['ensemble_models']
         self.dataset_name = opt['dataset_name']
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.metrics = {}
-        def calculate(metrics):
-            return metrics['psnr']
+        # self.metrics = {}
+        # def calculate(metrics):
+        #     return metrics['psnr']
 
-        for model in self.ensemble_models:
-            path = os.path.join('ensemble_models', model, 'ensemble_output', self.dataset_name, 'metrics.json')
-            with open(path, 'r') as f:
-                data = json.load(f)
-            for key, val in data.items():
-                score = calculate(val)
-                if key not in self.metrics:
-                    self.metrics[key] = []
-                self.metrics[key].append(score)
-        for key, val in self.metrics.items():
-            self.metrics[key] = torch.tensor(val, device=self.device)
+        # for model in self.ensemble_models:
+        #     path = os.path.join('ensemble_models', model, 'ensemble_output', self.dataset_name, 'metrics.json')
+        #     with open(path, 'r') as f:
+        #         data = json.load(f)
+        #     for key, val in data.items():
+        #         score = calculate(val)
+        #         if key not in self.metrics:
+        #             self.metrics[key] = []
+        #         self.metrics[key].append(score)
+        # for key, val in self.metrics.items():
+        #     self.metrics[key] = torch.tensor(val, device=self.device)
 
     def get_hqs(self, img_name):
         ensemble_models = self.ensemble_models
@@ -117,8 +117,8 @@ class Dataset_PairedImage(data.Dataset):
         img_hqs = img_hqs.to(self.device)
         # stx()
         ret = {'lq': img_lq, 'hqs': img_hqs, 'gt': img_gt, 'img_name': img_name}
-        if img_name in self.metrics:
-            ret['metrics'] = self.metrics[img_name]
+        # if img_name in self.metrics:
+        #     ret['metrics'] = self.metrics[img_name]
             # print(ret['metrics'])
         # lq,gt:ndarray. hqs:tensor
         return ret
