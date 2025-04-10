@@ -6,7 +6,7 @@ from PIL import Image
 import utils
 from pdb import set_trace as stx
 
-res_dir = '/root/autodl-tmp/ennet/ensemble_models/lmt/ensemble_output/SDSD_indoor'
+res_dir = '/root/autodl-tmp/ennet/ensemble_models/flw/ensemble_output/SDSD_indoor'
 target_dir = '/root/autodl-tmp/ennet/datasets/SDSD_indoor/test/GT'
 
 res_names = os.listdir(res_dir)

@@ -62,14 +62,12 @@ def parse_options(is_train=True):
 
 def init_loggers(opt):
     # log记录器
-    log_file = osp.join(opt['path']['log'],
-                        f"train_{opt['name']}_{get_time_str()}.log")
+    log_file = osp.join(opt['path']['log'], f"train.log")
     logger = get_root_logger(
         logger_name='basicsr', log_level=logging.INFO, log_file=log_file)
     
     # metric记录器
-    log_file = osp.join(opt['path']['log'],
-                        f"metric.csv")
+    log_file = osp.join(opt['path']['log'], f"metric.csv")
     logger_metric = get_root_logger(logger_name='metric',
                                     log_level=logging.INFO, log_file=log_file)
     metric_str = f'iter ({get_time_str()})'
@@ -79,7 +77,10 @@ def init_loggers(opt):
     
     # 打印opt
     # logger.info(dict2str(opt)) 
-    return logger
+    tb_logger = None
+    if opt['logger'].get('use_tb_logger'):
+        tb_logger = init_tb_logger(log_dir=opt['path']['log'])
+    return logger, tb_logger
 
 def create_train_val_dataloader(opt, logger):
     
@@ -171,7 +172,7 @@ def main():
         make_exp_dirs(opt) # 建文件夹： ennet_tower / {models, training_states, visualization, _arch.py}
     
     # initialize loggers
-    logger = init_loggers(opt)
+    logger, tb_logger = init_loggers(opt)
     
     # create train and validation dataloaders
     result = create_train_val_dataloader(opt, logger)
@@ -193,11 +194,11 @@ def main():
 
     model = create_model(opt)    
     if False: # resume training
-        current_iter = 10000
+        current_iter = 100000
         for _ in range(current_iter):
             model.update_learning_rate(current_iter) # 学习率调到位
-        start_epoch = 83 # iter // (485/B)
-        weight_path = 'experiments/LOLv1_03052154/models/net_g_10000.pth'
+        start_epoch = 445
+        weight_path = 'experiments/04101948_LOLv2s/models/net_g_100000.pth'
         checkpoint = torch.load(weight_path)
         model.net_g.load_state_dict(checkpoint['params'])
         best_metric = {'iter': 0}
@@ -270,7 +271,7 @@ def main():
                 train_data['lq'] = train_data['lq'][indices]
                 train_data['gt'] = train_data['gt'][indices]
                 train_data['hqs'] = train_data['hqs'][indices]
-                train_data['metrics'] = train_data['metrics'][indices]
+                # train_data['metrics'] = train_data['metrics'][indices]
             # if mini_gt_size < gt_size:
             #     x0 = int((gt_size - mini_gt_size) * random.random())
             #     y0 = int((gt_size - mini_gt_size) * random.random())
@@ -281,7 +282,7 @@ def main():
             #     hqs = hqs[:, :, :, x0:x1, y0:y1]
             # model.feed_train_data({'lq': lq, 'hqs': hqs, 'gt': gt,  })
             model.feed_train_data(train_data)
-            model.optimize_parameters(current_iter) #
+            model.optimize_parameters(current_iter, tb_logger) #
 
             sum_iter_time += time.time() - iter_time
 
@@ -305,7 +306,7 @@ def main():
                 # wheather use uint8 image to compute metrics
                 use_image = opt['val'].get('use_image', True)
                 
-                current_metric = model.validation(val_loader, current_iter, None,
+                current_metric = model.validation(val_loader, current_iter, tb_logger,
                                                   opt['val']['save_img'], rgb2bgr, use_image)
                 
                 # log cur metric to csv file

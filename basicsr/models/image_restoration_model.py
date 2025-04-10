@@ -180,7 +180,7 @@ class ImageCleanModel(BaseModel):
         if 'gt' in data:
             self.gt = data['gt'].to(self.device)
 
-    def optimize_parameters(self, current_iter): 
+    def optimize_parameters(self, current_iter, tb_logger=None): 
         self.optimizer_g.zero_grad()
         moe_w, pred = self.net_g(self.lq, self.hqs) # 得到增强结果
         self.output = pred # 用于validation
@@ -200,6 +200,8 @@ class ImageCleanModel(BaseModel):
         self.log_dict['l_moe'] += l_moe
         self.log_dict['loss'] += loss
         self.log_dict['cnt'] += 1
+        if tb_logger:
+            tb_logger.add_scalar(f'Train/loss_pix', l_pix, current_iter)
         # self.log_dict = self.reduce_loss_dict(loss_dict)
 
         if self.ema_decay > 0:
@@ -233,7 +235,7 @@ class ImageCleanModel(BaseModel):
         self.net_g.eval()
         dataset_name = dataloader.dataset.opt['name']
         with_metrics = self.opt['val'].get('metrics') is not None
-        save_prob = self.opt['val'].get('save_img_prob')
+        save_prob = self.opt['val'].get('save_img_prob', 1)
         if with_metrics:
             self.metric_results = {
                 metric: 0
@@ -293,7 +295,6 @@ class ImageCleanModel(BaseModel):
                 # imwrite(cv2.cvtColor(gt_img, cv2.COLOR_RGB2BGR), save_gt_img_path)
                 imwrite(sr_img, save_img_path)
                 imwrite(gt_img, save_gt_img_path)
-
             
             sr_img = sr_img.astype(np.float64)/255.
             gt_img = gt_img.astype(np.float64)/255.
@@ -333,6 +334,9 @@ class ImageCleanModel(BaseModel):
             log_str += f'\t # {metric}: {value:.4f}'
         logger = get_root_logger()
         logger.info(log_str)
+        if tb_logger:
+            for metric, value in self.metric_results.items():
+                tb_logger.add_scalar(f'Val/{metric}', value, current_iter)
 
     def get_current_visuals(self): #hqs,output,gt
         out_dict = OrderedDict()

@@ -6,3 +6,4 @@ visualization/
 note
 datasets/
 *.log
+*.out

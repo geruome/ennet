@@ -75,21 +75,12 @@ class Dataset_PairedImage(data.Dataset):
         self.ensemble_models = opt['ensemble_models']
         self.dataset_name = opt['dataset_name']
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        # self.metrics = {}
-        # def calculate(metrics):
-        #     return metrics['psnr']
-
-        # for model in self.ensemble_models:
-        #     path = os.path.join('ensemble_models', model, 'ensemble_output', self.dataset_name, 'metrics.json')
-        #     with open(path, 'r') as f:
-        #         data = json.load(f)
-        #     for key, val in data.items():
-        #         score = calculate(val)
-        #         if key not in self.metrics:
-        #             self.metrics[key] = []
-        #         self.metrics[key].append(score)
-        # for key, val in self.metrics.items():
-        #     self.metrics[key] = torch.tensor(val, device=self.device)
+        self.use_cache = opt.get('use_cache', False)
+        if self.use_cache:
+            self.cache = {}
+            for index in range(len(self.paths)):
+                self.__getitem__(index)
+            stx()
 
     def get_hqs(self, img_name):
         ensemble_models = self.ensemble_models
@@ -105,21 +96,22 @@ class Dataset_PairedImage(data.Dataset):
         return res
 
     def __getitem__(self, index):
-        index = index % len(self.paths)    
+        index = index % len(self.paths)
         # image range: [0, 1], float32.
+        if self.use_cache and index in self.cache:
+            return self.cache[index]
+
         gt_path = self.paths[index]['gt_path']
         img_name = os.path.split(gt_path)[-1]
-        img_gt = path_to_tensor(gt_path)
+        img_gt = path_to_tensor(gt_path).to(self.device)
+        # .to(dtype=torch.bfloat16)
         lq_path = self.paths[index]['lq_path']
-        img_lq = path_to_tensor(lq_path)
+        img_lq = path_to_tensor(lq_path).to(self.device)
+        img_hqs = self.get_hqs(img_name).to(self.device)
 
-        img_hqs = self.get_hqs(img_name)
-        img_hqs = img_hqs.to(self.device)
-        # stx()
         ret = {'lq': img_lq, 'hqs': img_hqs, 'gt': img_gt, 'img_name': img_name}
-        # if img_name in self.metrics:
-        #     ret['metrics'] = self.metrics[img_name]
-            # print(ret['metrics'])
+        if self.use_cache:
+            self.cache[index] = ret
         # lq,gt:ndarray. hqs:tensor
         return ret
     

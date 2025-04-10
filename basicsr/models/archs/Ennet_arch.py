@@ -142,62 +142,90 @@ class AttentionConfig:
     n_head: int = 1
 
 
+class MRFFI(nn.Module):
+    def __init__(self, opt):
+        super(MRFFI, self).__init__()
+        self.N = opt['num_models']
+        # self.linear = nn.Linear(self.N, 1, bias=False)
+
+        self.channels = opt['channels']
+        self.emb_dim = opt['emb_dim']
+        self.P = opt['block_size']
+        assert self.P%4==0, 'block_size must be multiple of 4 !!!'
+
+        stride = self.P//2
+        padding = stride//2
+        in_channels = self.channels*self.N
+        attn_config = AttentionConfig(**dict(n_embd=self.emb_dim))
+
+        # self.linear = nn.Conv2d(in_channels, self.channels, 1)
+        self.linear = nn.Linear(self.N, 1, bias=False)
+
+        self.conv = nn.Conv2d(in_channels, self.emb_dim, kernel_size=self.P, stride=stride, padding=padding)
+        self.up_conv = nn.ConvTranspose2d(self.emb_dim, self.channels, kernel_size=self.P, stride=stride, padding=padding)
+        self.attn_layers = nn.ModuleList( Block(attn_config) for _ in range(opt['n_layers']))
+
+        self.ksizes = opt['kernal_sizes']
+        assert all(i%2==1 for i in self.ksizes)
+        ch = self.emb_dim
+        assert ch%len(self.ksizes)==0
+        ch = ch//len(self.ksizes)
+        self.convs = nn.ModuleList([
+            nn.Conv2d(ch, ch, kernel_size=k, padding=k//2) for k in self.ksizes
+        ])
+
+
+    def forward(self, x: torch.Tensor):
+        '''
+        x: (B,N,c,h,w), [0,1]
+        '''
+        B, N, c, h, w = x.shape
+        x0 = x.permute(0, 2, 3, 4, 1)
+        x0 = self.linear(x0).squeeze(-1) # B,c,h,w
+
+        x = x.reshape(B, N*c, h, w)
+        x = self.conv(x) # (B,dim,hp,wp)
+        B, dim, hp, wp = x.shape
+        x1 = x.permute(0, 2, 3, 1).reshape(B, hp*wp, dim)
+        for layer in self.attn_layers:
+            x1 = layer(x1)
+        x1 = x1.permute(0, 2, 1).reshape(B, dim, hp, wp)
+
+        splits = torch.chunk(x, len(self.ksizes), dim=1)  # (B,dim/4,hp,wp) * 4
+        x2 = [conv(s) for conv, s in zip(self.convs, splits)]
+        x2 = torch.cat(x2, dim=1) # (B,dim,hp,wp)
+        res = self.up_conv(x1+x2) + x0 # B,c,h,w
+        # res = torch.clamp(res, 0, 1)
+        return res
+
+
 class Ennet(nn.Module):
     def __init__(self, opt):
         super(Ennet, self).__init__()
         self.N = opt['num_models']
-        self.in_channels = opt.get('in_channels', 3)
-        self.emb_dim = opt['emb_dim']
-        self.P = opt['block_size']
-        self.stride = opt['stride']
-        hidden_dim = self.N * self.emb_dim
-        attn_config = AttentionConfig(**dict(n_embd=hidden_dim))
-        self.conv = nn.Conv2d(self.in_channels, self.emb_dim, kernel_size=self.P, stride=self.stride)
-        self.up_conv = nn.ConvTranspose2d(self.emb_dim, self.in_channels, kernel_size=self.P, stride=self.stride)
-        self.attn_layers = nn.ModuleList( Block(attn_config) for _ in range(opt['n_layers']))
-        self.linear = nn.Linear(self.N, 1, bias=False)
         self.moe = MOE(self.N)
-        # self.weight = nn.Parameter(torch.full((self.N,), 1/self.N))
+        self.mrffi = MRFFI(opt)
         print("total parameter num of Ennet: ", count_parameters(self), '-------------------------')
 
     def forward(self, x, xn):
         '''
         x.shape = B,C,H,W
-        xn.shape = B,N,C,H,W #hqs
+        xn.shape = B,N,C,H,W
         '''
         moe_weight = self.moe(x) # B,N
         B, N, C, H, W = xn.shape
         xn = xn * moe_weight.view(B, self.N, 1, 1, 1)
-        # assert H%self.stride==0 and W%self.stride==0
-        y = xn.reshape(B*N, C, H, W)
-        y = self.conv(y) # (B*N, dim, hp, wp)
-        BN, dim, hp, wp = y.shape
-        y = y.reshape(B, N, dim, hp, wp)
-        y = y.permute(0, 3, 4, 1, 2)
-        # (B, N, dim*hp*wp)
-        y = y.reshape(B, hp*wp, N*dim) # (B, hp*wp, N*dim)
-
-        for layer in self.attn_layers: # block_atten
-            y = layer(y)
-        y = y.reshape(B, hp, wp, N, dim)
-        y = y.permute(0, 3, 4, 1, 2) # (B, N, dim, hp, wp)
-        y = y.reshape(BN, dim, hp, wp)
-        y = self.up_conv(y)
-        y = y.reshape(B, N, C, H, W)
-        
-        xn = xn + y # (B, N, C, H, W)
-        xn = xn.permute(0, 2, 3, 4, 1)
-        xn = self.linear(xn).squeeze(-1)
-        return moe_weight, xn
+        res = self.mrffi(xn)
+        return moe_weight, res
 
 
 if __name__ == '__main__':
-    B, C, H, W = 4, 3, 384, 384
+    B, C, H, W = 4, 3, 512, 960
     N = 6 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = MOE(N, C)
-    model.to(device)
-    x = torch.randn(B, C, H, W).to(device)
-    output = model(x)
-    print(output.shape)
-    print(output.sum(dim=1))
+    opt = {'channels': 3, 'block_size': 16, 'kernal_sizes': [3,7,11,15], 'emb_dim': 256, 'n_layers': 2, 'num_models': 6}
+    model = Ennet(opt)
+    x = torch.randn(B, C, H, W)
+    xn = torch.randn(B, N, C, H, W)
+    w, res = model(x, xn)
+    print(res.shape)
