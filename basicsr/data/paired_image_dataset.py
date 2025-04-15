@@ -79,8 +79,13 @@ class Dataset_PairedImage(data.Dataset):
         if self.use_cache:
             self.cache = {}
             for index in range(len(self.paths)):
+                total = torch.cuda.get_device_properties(0).total_memory
+                allocated = torch.cuda.memory_allocated(0)
+                if allocated / total >= 1/2: # 最多用1/2的显存来cache
+                    break
                 self.__getitem__(index)
-            stx()
+            print(f"{len(self.cache)} of {len(self.paths)} imgs cached in {self.opt['phase']}_dataloader.")
+            # stx()
 
     def get_hqs(self, img_name):
         ensemble_models = self.ensemble_models
@@ -99,7 +104,11 @@ class Dataset_PairedImage(data.Dataset):
         index = index % len(self.paths)
         # image range: [0, 1], float32.
         if self.use_cache and index in self.cache:
-            return self.cache[index]
+            ret = self.cache[index]
+            # return ret
+            for key in ['lq', 'hqs', 'gt']:
+                ret[key] = ret[key].type(torch.float32) / 255.
+            return ret
 
         gt_path = self.paths[index]['gt_path']
         img_name = os.path.split(gt_path)[-1]

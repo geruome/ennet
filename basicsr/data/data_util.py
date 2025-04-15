@@ -10,17 +10,14 @@ from basicsr.data.transforms import mod_crop
 from basicsr.utils import img2tensor, scandir
 from pdb import set_trace as stx
 
-def path_to_tensor(filepath):
+def path_to_tensor(filepath): # return uint8 tensor
     # print(filepath, '-----------')
     img = cv2.imread(filepath)
     if img is None:
         raise ValueError(f"Failed to load image from '{osp.join(os.getcwd(), filepath)}'. File may not exist or is not a valid image.")
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img = np.float32(img) / 255.
-    # img = torch.from_numpy(img).permute(2, 0, 1)
+    # img = np.float32(img) / 255.
     img = torch.from_numpy(img).permute(2, 0, 1)
-    # img /= 255.
-    # print(img.shape, img.device)
     return img
 
 
