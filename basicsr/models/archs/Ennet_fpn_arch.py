@@ -49,86 +49,77 @@ class CNNBlock(nn.Module):
         x = self.pool(x)
         return x
 
+class FPN(nn.Module):
+    def __init__(self, in_channels_list, out_channels):
+        super().__init__()
+        self.lateral_convs = nn.ModuleList()
+        self.output_convs = nn.ModuleList()
 
-# class MOE(nn.Module):
-#     def __init__(self, N=6, C=3):
-#         super(MOE, self).__init__()
-#         self.conv_layers = nn.ModuleList([
-#             CNNBlock(3, 32),
-#             CNNBlock(32, 64),
-#             CNNBlock(64, 128)
-#         ])
-#         self.global_pool = nn.AdaptiveAvgPool2d(1)
-#         self.classifier = nn.Sequential(
-#             nn.Linear(128, 256),
-#             nn.ReLU(), nn.Dropout(0.2),
-#             nn.Linear(256, 128),
-#             nn.ReLU(), nn.Dropout(0.2),
-#             nn.Linear(128, N)
-#         )
-#         print("total parameter num of MOE: ", count_parameters(self), '-------------------------')
+        # 横向连接（1x1卷积调整通道）
+        for in_channels in in_channels_list:
+            self.lateral_convs.append(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1)
+            )
+        
+        # 输出卷积（3x3卷积平滑特征）
+        for _ in in_channels_list:
+            self.output_convs.append(
+                nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+            )
 
-#     def forward(self, x):
-#         for layer in self.conv_layers:
-#             # print(x.shape)
-#             x = layer(x)
-#         x = self.global_pool(x)
-#         x = x.view(x.size(0), -1)
-#         x = self.classifier(x)
-#         return F.softmax(x, dim=-1)
+    def forward(self, inputs):
+        # 输入特征层级顺序：浅层→深层（尺寸由大到小）
+        laterals = [conv(feat) for conv, feat in zip(self.lateral_convs, inputs)]
+        
+        # 自上而下融合
+        for i in range(len(laterals)-1, 0, -1):
+            laterals[i-1] += F.interpolate(
+                laterals[i], scale_factor=2, mode='bilinear', align_corners=False
+            )
+        
+        # 输出平滑
+        outputs = [self.output_convs[i](laterals[i]) for i in range(len(laterals))]
+        return outputs  # 返回所有层级融合结果
 
-# class MOE(nn.Module):
-#     def __init__(self, N=6, C=3):
-#         super(MOE, self).__init__()
-#         self.conv_layers = nn.Sequential(
-#             nn.Conv2d(C, 32, kernel_size=3, stride=1, padding=1),
-#             nn.ReLU(),
-#             nn.MaxPool2d(kernel_size=2, stride=2),
-
-#             nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
-#             nn.ReLU(),
-#             nn.MaxPool2d(kernel_size=2, stride=2),
-
-#             nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
-#             nn.ReLU(),
-#             nn.MaxPool2d(kernel_size=2, stride=2)
-#         )
-#         self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
-#         self.fc = nn.Linear(128, N)
-#         print("total parameter num of MOE: ", count_parameters(self), '-------------------------') # 
-
-#     def forward(self, x):
-#         x = self.conv_layers(x) 
-#         x = self.global_avg_pool(x)
-#         x = torch.flatten(x, start_dim=1)
-#         x = self.fc(x) 
-#         return F.softmax(x, dim=-1)
-
-class Moe(nn.Module):
-    def __init__(self, opt, N=6, C=3):
-        super(Moe, self).__init__()
-        self.conv_layers = nn.Sequential(
-            nn.Conv2d(C, 8, kernel_size=3, stride=1, padding=1),
+class MOE(nn.Module): #+FPN
+    def __init__(self, N=6, C=3):
+        super().__init__()
+        
+        # 原始卷积层拆分为三个独立块
+        self.conv_block1 = nn.Sequential(
+            nn.Conv2d(C, 32, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-
-            nn.Conv2d(8, 16, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-
-            nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1), #感受野3，5，7 是不是变化太小了
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2)
+            nn.MaxPool2d(2)
         )
-        self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1)) #？
-        self.fc = nn.Linear(32, N)
-        print("total parameter num of MOE: ", count_parameters(self), '-------------------------') # 
+        self.conv_block2 = nn.Sequential(
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2)
+        )
+        self.conv_block3 = nn.Sequential(
+            nn.Conv2d(64, 128, 3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2)
+        )
+        
+        # 添加FPN模块
+        self.fpn = FPN(in_channels_list=[32, 64, 128], out_channels=256)       
+        self.global_avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Linear(256, N)  # 输入维度需与FPN输出通道一致
 
     def forward(self, x):
-        x = self.conv_layers(x) 
-        x = self.global_avg_pool(x)
-        x = torch.flatten(x, start_dim=1)
-        x = self.fc(x) 
+        # 获取多层级特征
+        c1 = self.conv_block1(x)  # 32通道
+        c2 = self.conv_block2(c1) # 64通道
+        c3 = self.conv_block3(c2) # 128通道
+        
+        # FPN融合特征
+        fused_features = self.fpn([c1, c2, c3])
+        
+        # 取最后一层融合结果（可根据需要调整）
+        x = self.global_avg_pool(fused_features[-1])
+        x = torch.flatten(x, 1)
+        x = self.fc(x)
         return F.softmax(x, dim=-1)
 
 
@@ -253,11 +244,11 @@ class MRFFI(nn.Module):
         return res
 
 
-class Ennet(nn.Module):
+class Ennet_fpn(nn.Module):
     def __init__(self, opt):
-        super(Ennet, self).__init__()
+        super(Ennet_fpn, self).__init__()
         self.N = opt['num_models']
-        self.moe = Moe(self.N)
+        self.moe = MOE(self.N)
         self.mrffi = MRFFI(opt)
         print("total parameter num of Ennet: ", count_parameters(self), '-------------------------')
 

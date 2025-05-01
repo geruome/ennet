@@ -25,7 +25,7 @@ from pdb import set_trace as stx
 
 def parse_options(is_train=True):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--opt', type=str, default='Options/LOLv2s.yml', help='Path to option YAML file.')
+    parser.add_argument('--opt', type=str, default='Options/moe_train.yml', help='Path to option YAML file.')
     parser.add_argument('--gpu_id', type=str, default="0", help='GPU devices.')
     parser.add_argument('--launcher', choices=['none', 'pytorch', 'slurm'], default='none', help='job launcher') #默认不进行分布式训练
     parser.add_argument('--local_rank', type=int, default=0)
@@ -178,33 +178,8 @@ def main():
     result = create_train_val_dataloader(opt, logger)
     train_loader, train_sampler, val_loader, total_epochs, total_iters = result
 
-    # if resume_state:  # resume training
-    #     check_resume(opt, resume_state['iter'])
-    #     # print(resume_state)
-    #     model = create_model(opt)
-    #     model.resume_training(resume_state)  # handle optimizers and schedulers
-    #     logger.info(f"Resuming training from epoch: {resume_state['epoch']}, "
-    #                 f"iter: {resume_state['iter']}.")
-    #     start_epoch = resume_state['epoch']
-    #     current_iter = resume_state['iter']
-    #     best_metric = resume_state['best_metric']
-    #     # best_psnr = best_metric['psnr']
-    #     # best_iter = best_metric['iter']
-    #     # logger.info(f'best psnr: {best_psnr} from iteration {best_iter}')
 
-    model = create_model(opt)  
-    #加载moe
-    checkpoint = torch.load('experiments/04242256_LOLv2s/models/net_g_150000.pth')
-    if 'params' in checkpoint:
-        state_dict = checkpoint['params']
-        model.net_g.moe.load_state_dict(state_dict)
-    else:
-        print("checkpoint 中没有 'params' 键。")
-
-    # 冻结moe网络的参数，只更新第二部分网络的参数
-    for param in model.net_g.moe.parameters():
-        param.requires_grad = False
-    
+    model = create_model(opt)    
     if False: # resume training
         current_iter = 100000
         for _ in range(current_iter):
@@ -221,7 +196,7 @@ def main():
         current_iter = 0
         best_metric = {'iter': 0}
         for k, v in opt['val']['metrics'].items():
-            best_metric[k] = 0
+            best_metric[k] = 0 #loss越小越好
 
     # create message logger (formatted outputs)
     msg_logger = MessageLogger(opt, current_iter, None)
@@ -246,8 +221,6 @@ def main():
     groups = np.array([sum(iters[0:i + 1]) for i in range(0, len(iters))])
     batch_size = opt['datasets']['train'].get('batch_size_per_gpu')
     mini_batch_sizes = opt['datasets']['train'].get('mini_batch_sizes')
-    # gt_size = opt['datasets']['train'].get('gt_size')
-    # mini_gt_sizes = opt['datasets']['train'].get('gt_sizes')
 
     epoch = start_epoch
 
@@ -327,7 +300,7 @@ def main():
                 logger_metric.info(metric_str)
                 
                 # log best metric
-                if best_metric['psnr'] < current_metric['psnr']:
+                if best_metric['loss'] > current_metric['loss']:
                     best_metric = current_metric
                     # save best model
                     best_metric['iter'] = current_iter

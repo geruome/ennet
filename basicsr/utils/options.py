@@ -41,7 +41,7 @@ def parse(opt_path, is_train=True):
     # opt['name'] = osp.basename(opt_path).split('.')[0]  # 获取文件名
     opt['name'] = f'{datetime.now().strftime("%m%d%H%M")}'
     if 'exp_note' in opt:
-        opt['name'] += f'_{opt['exp_note']}'
+        opt['name'] += f"_{opt['exp_note']}"
     
     if opt.get('device', ""):
         device = opt['device']

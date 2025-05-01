@@ -1,12 +1,7 @@
 # general settings
-# name: ennet_tower # doesn't matter, only file name matters
-model_type: ImageCleanModel 
+model_type: WeightModel
 scale: 1
-# num_gpu: 1  # set num_gpu: 0 for cpu mode
-# device: "0" # 需为单个数字
-
 manual_seed: 42
-
 ensemble_models: ['retinexformer', 'cidnet', 'glare', 'flw', 'lmt', 'lytnet'] # 'retinexformer', 'cidnet', 'glare', 'lytnet', 'flw', 'lmt'
 dataset_name: LOLv2s # SDSD_indoor
 # weight_path: pretrained_weights/best_psnr_26.95_25000.pth
@@ -51,7 +46,7 @@ datasets:
 
 # network structures
 network_g:
-  type: Ennet  # network name, in basicsr/models/archs/ Ennet_fpn, Ennet_ez
+  type: Moe  # network name, in basicsr/models/archs/ Ennet_fpn, Ennet_ez
   channels: 3
   block_size: 16
   kernal_sizes: [3,5,7,9]
@@ -85,8 +80,8 @@ train:
 
   optim_g: # 优化器设置
     type: Adam
-    lr: !!float 2e-4
-    weight_decay: !!float 1e-4
+    lr: !!float 1e-4 #!!float 2e-4
+    weight_decay: 0 #!!float 1e-4 
     betas: [0.9, 0.999]
   
   pixel_opt: # losses
@@ -106,12 +101,7 @@ val:
   max_minibatch: 8
 
   metrics:
-    psnr: # metric name, can be arbitrary
-      type: calculate_psnr
-    ssim: 
-      type: calculate_ssim
-    lpips: 
-      type: calculate_lpips
+    loss: calculate_psnr #?
 
 # logging settings
 logger:

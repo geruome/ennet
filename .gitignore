@@ -7,3 +7,5 @@ note
 datasets/
 *.log
 *.out
+moe_tran_note.txt
+test_kl.ipynb

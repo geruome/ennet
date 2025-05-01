@@ -75,9 +75,9 @@ def calculate_psnr_tensor(hqs, gt):
     return psnr  # (B,N)
 
 
-class ImageCleanModel(BaseModel):
+class WeightModel(BaseModel):
     def __init__(self, opt):
-        super(ImageCleanModel, self).__init__(opt)
+        super(WeightModel, self).__init__(opt)
 
         # 训练中混合增强
         self.mixing_flag = self.opt['train']['mixing_augs'].get('mixup', False)
@@ -127,14 +127,13 @@ class ImageCleanModel(BaseModel):
             self.net_g_ema.eval()
 
         # define losses 使用配置文件中的信息实例化Loss，并移动到设备
-        if train_opt.get('pixel_opt'):
-            pixel_type = train_opt['pixel_opt'].pop('type')
-            cri_pix_cls = getattr(loss_module, pixel_type)  
-            self.cri_pix = cri_pix_cls(**train_opt['pixel_opt']).to(
-                self.device)      #如何写 weighted loss 呢？传参构造Loss函数
-        else:
-            raise ValueError('pixel loss are None.')
-        self.lambda_moe = train_opt.get('lambda_moe')
+        # if train_opt.get('pixel_opt'):
+        #     pixel_type = train_opt['pixel_opt'].pop('type')
+        #     cri_pix_cls = getattr(loss_module, pixel_type)  
+        #     self.cri_pix = cri_pix_cls(**train_opt['pixel_opt']).to(
+        #         self.device)      #如何写 weighted loss 呢？传参构造Loss函数
+        # else:
+        #     raise ValueError('pixel loss are None.')
 
         # set up optimizers and schedulers
         self.setup_optimizers()
@@ -151,8 +150,8 @@ class ImageCleanModel(BaseModel):
                 logger = get_root_logger()
                 logger.warning(f'Params {k} will not be optimized.')
 
-        optim_type = train_opt['optim_g'].pop('type')
-        if optim_type == 'Adam':
+        optim_type = train_opt['optim_g'].pop('type') # type: Adam, lr: !!float 2e-4,    weight_decay: !!float 1e-4,    betas: [0.9, 0.999]
+        if optim_type == 'Adam': #here
             self.optimizer_g = torch.optim.Adam( 
                 optim_params, **train_opt['optim_g'])
         elif optim_type == 'AdamW':
@@ -180,37 +179,47 @@ class ImageCleanModel(BaseModel):
         if 'gt' in data:
             self.gt = data['gt'].to(self.device)
 
+    def cal_loss(self, moe_w, metrics):
+        # mean = metrics.mean(dim=0)
+        # loss = F.kl_div(moe_w.log(), F.softmax(metrics/mean, dim=-1))
+        mean = metrics.mean(dim=1, keepdim=True)
+        #loss = F.kl_div(moe_w.log(), F.softmax(metrics-mean, dim=-1), reduction='batchmean') 
+        loss = ((moe_w - F.softmax(metrics - mean, dim=-1)) ** 2).mean()
+        #print(moe_w, metrics,  mean, metrics-mean, F.softmax(metrics-mean, dim=-1))
 
+        return loss
+        
+    
     def optimize_parameters(self, current_iter, tb_logger=None): 
         self.optimizer_g.zero_grad()
-        moe_w, pred = self.net_g(self.lq, self.hqs) # 得到增强结果
-        self.output = pred # 用于validation
-        output = tensor2img([self.output]) #
+        moe_w = self.net_g(self.lq) 
+        # print(moe_w)
+        self.output = moe_w # 用于validation
         loss_dict = OrderedDict()
         # pixel loss
-        l_pix = self.cri_pix(pred, self.gt)
-        # self.metrics = calculate_psnr_tensor(self.hqs, self.gt)
-        loss = l_pix 
-        
-        # # 冻结 self.net_g 中 moe部分的参数
-        # if hasattr(self.net_g, 'moe'):
-        #     for param in self.net_g.moe.parameters():
-        #         param.requires_grad = False
-        
+        self.metrics = calculate_psnr_tensor(self.hqs, self.gt)
+        loss = self.cal_loss(moe_w, self.metrics)
         loss.backward()
         
+        # # 检查梯度
+        # for name, param in self.net_g.named_parameters():
+        #     print(f"参数名称: {name}, 参数形状: {param.shape}")
+        #     if param.grad is None:
+        #         print(f"Parameter {name} has no gradient.")
+        #     elif torch.all(param.grad == 0):
+        #         print(f"Parameter {name} has zero gradient.")
+        #     else:
+        #         print(f"Parameter {name} has non - zero gradient.")
+        
         if self.opt['train']['use_grad_clip']:
-            torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), 10000)
+            torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), 10000) #0.01
         self.optimizer_g.step()
         if not hasattr(self, 'log_dict'):
-            self.log_dict = {'l_pix':0, 'l_moe':0, 'loss':0, 'cnt':0}
-        self.log_dict['l_pix'] += l_pix
-        # self.log_dict['l_moe'] += l_moe
+            self.log_dict = {'loss':0, 'cnt':0}
         self.log_dict['loss'] += loss
-        # self.log_dict['moe_w'] += moe_w
         self.log_dict['cnt'] += 1
         if tb_logger:
-            tb_logger.add_scalar(f'Train/loss_pix', l_pix, current_iter)
+            tb_logger.add_scalar(f'Train/loss', loss, current_iter)
         # self.log_dict = self.reduce_loss_dict(loss_dict)
 
         if self.ema_decay > 0:
@@ -228,8 +237,8 @@ class ImageCleanModel(BaseModel):
         else: #here
             self.net_g.eval()
             with torch.no_grad():
-                _, pred = self.net_g(self.lq, self.hqs)
-            self.output = pred
+                moe_w = self.net_g(self.lq)
+            self.output = moe_w
             self.net_g.train() # 设置模型回到训练模式
 
     def dist_validation(self, dataloader, current_iter, tb_logger, save_img, rgb2bgr, use_image):
@@ -261,7 +270,7 @@ class ImageCleanModel(BaseModel):
 
         # val过程
         cnt = 0
-        self.metric_results['l_pix'] = 0 #总损失
+        self.metric_results['loss'] = 0 #总损失
 
         for idx, val_data in enumerate(dataloader): # 遍历验证数据集中的所有样本
             
@@ -273,57 +282,54 @@ class ImageCleanModel(BaseModel):
             # test
             self.feed_data(val_data)
             test()
-            visuals = self.get_current_visuals()
-            sr_img = tensor2img([visuals['result']], rgb2bgr=rgb2bgr)
-            if 'gt' in visuals:
-                gt_img = tensor2img([visuals['gt']], rgb2bgr=rgb2bgr)
-                imwrite(gt_img, './gtgt.png')
-                del self.gt
-
+            self.metrics = calculate_psnr_tensor(self.hqs, self.gt)
+            
+            del self.gt
             # tentative for out of GPU memory
             del self.hqs
-            del self.output
+            del self.lq
             torch.cuda.empty_cache()
             
-            # save img
-            if save_img and idx<save_prob*len(dataloader):
-                if self.opt['is_train']:
-                    save_img_path = osp.join(self.opt['path']['visualization'],
-                                             img_name, f'{img_name}_{current_iter}.png')
+            # # save img 后面这里可以改成save weight
+            # if save_img and idx<save_prob*len(dataloader):
+            #     if self.opt['is_train']:
+            #         save_img_path = osp.join(self.opt['path']['visualization'],
+            #                                  img_name, f'{img_name}_{current_iter}.png')
 
-                    save_gt_img_path = osp.join(self.opt['path']['visualization'],
-                                                img_name, f'{img_name}_gt.png') #_{current_iter}
-                else:
-                    save_img_path = osp.join(
-                        self.opt['path']['visualization'], dataset_name,
-                        f'{img_name}.png')
-                    save_gt_img_path = osp.join(
-                        self.opt['path']['visualization'], dataset_name,
-                        f'{img_name}_gt.png')
+            #         save_gt_img_path = osp.join(self.opt['path']['visualization'],
+            #                                     img_name, f'{img_name}_gt.png') #_{current_iter}
+            #     else:
+            #         save_img_path = osp.join(
+            #             self.opt['path']['visualization'], dataset_name,
+            #             f'{img_name}.png')
+            #         save_gt_img_path = osp.join(
+            #             self.opt['path']['visualization'], dataset_name,
+            #             f'{img_name}_gt.png')
 
                 # imwrite(cv2.cvtColor(sr_img, cv2.COLOR_RGB2BGR), save_img_path)
                 # imwrite(cv2.cvtColor(gt_img, cv2.COLOR_RGB2BGR), save_gt_img_path)
-                imwrite(sr_img, save_img_path)
-                imwrite(gt_img, save_gt_img_path)
+                # imwrite(sr_img, save_img_path)
+                # imwrite(gt_img, save_gt_img_path)
             
-            sr_img = sr_img.astype(np.float64)/255.
-            gt_img = gt_img.astype(np.float64)/255.
+            # sr_img = sr_img.astype(np.float64)/255.
+            # gt_img = gt_img.astype(np.float64)/255.
             # calculate metrics
-            if with_metrics:
-                opt_metric = deepcopy(self.opt['val']['metrics'])
-                if use_image:
-                    for name, opt_ in opt_metric.items():
-                        metric_type = opt_.pop('type')
-                        ret = getattr(metric_module, metric_type)(sr_img, gt_img, **opt_) # use_image：指定用tensor2img后的结果
-                        self.metric_results[name] += ret
-                else:
-                    for name, opt_ in opt_metric.items():
-                        metric_type = opt_.pop('type')
-                        ret = getattr(metric_module, metric_type)(visuals['result'], visuals['gt'], **opt_) 
-                        self.metric_results[name] += ret
+            # if with_metrics:
+            #     opt_metric = deepcopy(self.opt['val']['metrics'])
+            #     if use_image:
+            #         for name, opt_ in opt_metric.items():
+            #             metric_type = opt_.pop('type')
+            #             ret = getattr(metric_module, metric_type)(sr_img, gt_img, **opt_) # use_image：指定用tensor2img后的结果
+            #             self.metric_results[name] += ret
+            #     else:
+            #         for name, opt_ in opt_metric.items():
+            #             metric_type = opt_.pop('type')
+            #             ret = getattr(metric_module, metric_type)(visuals['result'], visuals['gt'], **opt_) 
+            #             self.metric_results[name] += ret
             cnt += 1
-
-            self.metric_results['l_pix'] += self.cri_pix(visuals['result'], visuals['gt']) # here , vali时输出loss
+            
+            loss = self.cal_loss(self.output, self.metrics) 
+            self.metric_results['loss'] += loss # here , vali时输出loss
 
         # 计算平均指标 
         current_metric = 0.
@@ -348,13 +354,6 @@ class ImageCleanModel(BaseModel):
             for metric, value in self.metric_results.items():
                 tb_logger.add_scalar(f'Val/{metric}', value, current_iter)
 
-    def get_current_visuals(self): #hqs,output,gt
-        out_dict = OrderedDict()
-        out_dict['hqs'] = self.hqs.detach().cpu()
-        out_dict['result'] = self.output.detach().cpu()
-        if hasattr(self, 'gt'):
-            out_dict['gt'] = self.gt.detach().cpu()
-        return out_dict
 
     def save(self, epoch, current_iter, **kwargs):
         if self.ema_decay > 0:

@@ -50,77 +50,15 @@ class CNNBlock(nn.Module):
         return x
 
 
-# class MOE(nn.Module):
-#     def __init__(self, N=6, C=3):
-#         super(MOE, self).__init__()
-#         self.conv_layers = nn.ModuleList([
-#             CNNBlock(3, 32),
-#             CNNBlock(32, 64),
-#             CNNBlock(64, 128)
-#         ])
-#         self.global_pool = nn.AdaptiveAvgPool2d(1)
-#         self.classifier = nn.Sequential(
-#             nn.Linear(128, 256),
-#             nn.ReLU(), nn.Dropout(0.2),
-#             nn.Linear(256, 128),
-#             nn.ReLU(), nn.Dropout(0.2),
-#             nn.Linear(128, N)
-#         )
-#         print("total parameter num of MOE: ", count_parameters(self), '-------------------------')
-
-#     def forward(self, x):
-#         for layer in self.conv_layers:
-#             # print(x.shape)
-#             x = layer(x)
-#         x = self.global_pool(x)
-#         x = x.view(x.size(0), -1)
-#         x = self.classifier(x)
-#         return F.softmax(x, dim=-1)
-
-# class MOE(nn.Module):
-#     def __init__(self, N=6, C=3):
-#         super(MOE, self).__init__()
-#         self.conv_layers = nn.Sequential(
-#             nn.Conv2d(C, 32, kernel_size=3, stride=1, padding=1),
-#             nn.ReLU(),
-#             nn.MaxPool2d(kernel_size=2, stride=2),
-
-#             nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
-#             nn.ReLU(),
-#             nn.MaxPool2d(kernel_size=2, stride=2),
-
-#             nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
-#             nn.ReLU(),
-#             nn.MaxPool2d(kernel_size=2, stride=2)
-#         )
-#         self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
-#         self.fc = nn.Linear(128, N)
-#         print("total parameter num of MOE: ", count_parameters(self), '-------------------------') # 
-
-#     def forward(self, x):
-#         x = self.conv_layers(x) 
-#         x = self.global_avg_pool(x)
-#         x = torch.flatten(x, start_dim=1)
-#         x = self.fc(x) 
-#         return F.softmax(x, dim=-1)
-
-class Moe(nn.Module):
-    def __init__(self, opt, N=6, C=3):
-        super(Moe, self).__init__()
+class MOE(nn.Module): #极简
+    def __init__(self, N=6, C=3):
+        super(MOE, self).__init__()
         self.conv_layers = nn.Sequential(
-            nn.Conv2d(C, 8, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(C, 32, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
-
-            nn.Conv2d(8, 16, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-
-            nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1), #感受野3，5，7 是不是变化太小了
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2)
         )
-        self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1)) #？
+        self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(32, N)
         print("total parameter num of MOE: ", count_parameters(self), '-------------------------') # 
 
@@ -257,7 +195,7 @@ class Ennet(nn.Module):
     def __init__(self, opt):
         super(Ennet, self).__init__()
         self.N = opt['num_models']
-        self.moe = Moe(self.N)
+        self.moe = MOE(self.N)
         self.mrffi = MRFFI(opt)
         print("total parameter num of Ennet: ", count_parameters(self), '-------------------------')
 
