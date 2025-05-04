@@ -5,77 +5,10 @@ import math
 from dataclasses import dataclass
 from pdb import set_trace as stx
 import pywt
-
+from basicsr.models.archs.Moe_arch import Moe # 
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-
-class SEBlock(nn.Module):
-    def __init__(self, channel, reduction=16):
-        super(SEBlock, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Sequential(
-            nn.Linear(channel, channel//reduction),
-            nn.ReLU(),
-            nn.Linear(channel//reduction, channel),
-            nn.Sigmoid()
-        )
-        
-    def forward(self, x):
-        b, c, _, _ = x.size()
-        y = self.avg_pool(x).view(b, c)
-        y = self.fc(y).view(b, c, 1, 1)
-        return x * y.expand_as(x)
-
-
-class CNNBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3):
-        super(CNNBlock, self).__init__()
-        self.up_conv = nn.Conv2d(in_channels, out_channels, kernel_size, padding=kernel_size//2)
-        channels = out_channels
-        self.conv = nn.Sequential(
-            nn.BatchNorm2d(channels), nn.ReLU(),
-            nn.Conv2d(channels, channels, kernel_size, padding=kernel_size//2),
-            nn.BatchNorm2d(channels)
-        )
-        self.se = SEBlock(channels)
-        self.pool = nn.MaxPool2d(2)
-
-    def forward(self, x):
-        x = self.up_conv(x)
-        x = F.relu(x + self.conv(x))
-        x = self.se(x)
-        x = self.pool(x)
-        return x
-
-
-class MOE(nn.Module):
-    def __init__(self, N=6, C=3):
-        super(MOE, self).__init__()
-        self.conv_layers = nn.ModuleList([
-            CNNBlock(3, 32),
-            CNNBlock(32, 64),
-            CNNBlock(64, 128)
-        ])
-        self.global_pool = nn.AdaptiveAvgPool2d(1)
-        self.classifier = nn.Sequential(
-            nn.Linear(128, 256),
-            nn.ReLU(), nn.Dropout(0.2),
-            nn.Linear(256, 128),
-            nn.ReLU(), nn.Dropout(0.2),
-            nn.Linear(128, N)
-        )
-        print(f"total parameter num of MOE: {count_parameters(self)}, -------------------------", flush=True)
-
-    def forward(self, x):
-        for layer in self.conv_layers:
-            # print(x.shape)
-            x = layer(x)
-        x = self.global_pool(x)
-        x = x.view(x.size(0), -1)
-        x = self.classifier(x)
-        return F.softmax(x, dim=-1)
 
 
 class MLP(nn.Module):
@@ -327,7 +260,7 @@ class Ennet(nn.Module):
     def __init__(self, opt):
         super(Ennet, self).__init__()
         self.N = opt['num_models']
-        self.moe = MOE(self.N)
+        self.moe = Moe(opt)
         self.blockmixers = nn.ModuleList([BlockMixer(opt) for _ in range(2)])
         self.dec_filter, self.rec_filter = create_wavelet_filter(in_size=opt['channels'], out_size=opt['channels'])
         self.dec_filter = nn.Parameter(self.dec_filter, requires_grad=False)
@@ -349,8 +282,8 @@ class Ennet(nn.Module):
             nn.init.zeros_(m.bias)
 
     def multi_layer_enhance(self, x, xn, dep):
-        # moe_w = self.moe(x)
-        # xn = xn * moe_w[..., None, None, None]
+        moe_w = self.moe(x)
+        xn = xn * moe_w[..., None, None, None]
         res = self.blockmixers[dep-1](xn)
         if dep==1:
             return res
@@ -368,14 +301,11 @@ class Ennet(nn.Module):
         x.shape = B,C,H,W
         xn.shape = B,N,C,H,W
         '''
-        moe_w0 = self.moe(x) # B,N
         res = self.multi_layer_enhance(x, xn, dep=2)
-        return moe_w0, res
+        return res
 
 
 if __name__ == '__main__':
-    
-
     B, C, H, W = 4, 3, 384, 384
     N = 6
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -387,5 +317,5 @@ if __name__ == '__main__':
     model = Ennet(opt)
     x = torch.randn(B, C, H, W)
     xn = torch.randn(B, N, C, H, W)
-    w, res = model(x, xn)
+    res = model(x, xn)
     print(res.shape)

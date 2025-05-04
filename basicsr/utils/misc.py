@@ -77,10 +77,10 @@ def make_exp_dirs(opt): # Make dirs for experiments.
     else:
         mkdir_and_rename(path_opt.pop('results_root'))
     
-    # 创建path_opt 中的其他路径
-    for key, path in path_opt.items():
-        if ('strict_load' not in key) and ('pretrain_network' not in key) and ('resume' not in key):
-            os.makedirs(path, exist_ok=True)
+    # # 创建path_opt 中的其他路径
+    # for key, path in path_opt.items():
+    #     if ('strict_load' not in key) and ('pretrain_network' not in key) and ('resume' not in key):
+    #         os.makedirs(path, exist_ok=True)
 
 
 def scandir(dir_path, suffix=None, recursive=False, full_path=False):

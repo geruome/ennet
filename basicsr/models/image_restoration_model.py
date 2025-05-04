@@ -55,25 +55,6 @@ class Mixing_Augment:
         return target, input_
 
 
-def norm(tensor: torch.Tensor):
-    mean = tensor.mean(dim=-1).unsqueeze(-1).expand_as(tensor)
-    std = tensor.std(dim=-1, unbiased=False).unsqueeze(-1).expand_as(tensor)
-    return (tensor - mean) / (std+1e-10)
-
-
-def calculate_psnr_tensor(hqs, gt):
-    """
-    hqs: (B,N,C,H,W)
-    gt: (B,C,H,W)
-    """
-    B, N, C, H, W = hqs.shape
-    assert gt.shape == (B, C, H, W)
-    gt = gt[:, None, :, :, :].expand(B, N, C, H, W)
-    mse = torch.mean((hqs - gt) ** 2, dim=(2, 3, 4))  # (B,N)
-    psnr = 10 * torch.log10(1 / mse)
-    return psnr  # (B,N)
-
-
 def dict_add(dic, key, val):
     dic[key] = dic.get(key, 0) + val
 
@@ -98,11 +79,12 @@ class ImageCleanModel(BaseModel):
         # self.print_network(self.net_g)
         
         # load pretrained models
-        load_path = self.opt['path'].get('pretrain_network_g', None)
-        if load_path is not None:
-            self.load_network(self.net_g, load_path,
+        load_path = self.opt['path'].get('moe_weight', None)
+        if load_path is not None: # loading moe weight, set
+            self.load_network(self.net_g.moe, load_path,
                               self.opt['path'].get('strict_load_g', True), param_key=self.opt['path'].get('param_key', 'params'))
-
+            for param in self.net_g.moe.parameters():
+                param.requires_grad = False
         # 初始化训练设置
         if self.is_train:
             self.init_training_settings()
@@ -111,7 +93,7 @@ class ImageCleanModel(BaseModel):
         self.net_g.train() # Set the module in training mode.
         train_opt = self.opt['train']
 
-        # 初始化一个用于测试的网络实例 net_g_ema，并根据需要加载预训练的权重，然而现在并没有启用？
+        # 初始化一个用于测试的网络实例 net_g_ema，并根据需要加载预训练的权重.
         self.ema_decay = train_opt.get('ema_decay', 0)
         if self.ema_decay > 0:
             logger = get_root_logger()
@@ -151,7 +133,7 @@ class ImageCleanModel(BaseModel):
                 optim_params.append(v)
             else:
                 logger = get_root_logger()
-                logger.warning(f'Params {k} will not be optimized.')
+                # logger.warning(f'Params {k} will not be optimized.')
 
         optim_type = train_opt['optim_g'].pop('type')
         if optim_type == 'Adam':
@@ -184,15 +166,11 @@ class ImageCleanModel(BaseModel):
 
     def optimize_parameters(self, current_iter, tb_logger=None): 
         self.optimizer_g.zero_grad()
-        moe_w, pred = self.net_g(self.lq, self.hqs) # 得到增强结果
+        pred = self.net_g(self.lq, self.hqs)
         self.output = pred # 用于validation
-        loss_dict = OrderedDict()
         # pixel loss
         losses = [loss_func(pred, self.gt) for loss_func in self.loss_funcs]
-        l_pix = sum(losses)
-        self.metrics = calculate_psnr_tensor(self.hqs, self.gt)
-        l_moe = F.kl_div(moe_w.log(), F.softmax(self.metrics, dim=-1))
-        loss = l_pix + self.lambda_moe*l_moe
+        loss = sum(losses)
         loss.backward()
         if self.opt['train'].get('grad_clip', None):
             torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), self.opt['train']['grad_clip'])
@@ -202,11 +180,10 @@ class ImageCleanModel(BaseModel):
             self.log_dict = {}
         for name, _loss in zip(self.loss_names, losses):
             dict_add(self.log_dict, name, _loss)
-        dict_add(self.log_dict, 'l_moe', l_moe)
         dict_add(self.log_dict, 'loss', loss)
         dict_add(self.log_dict, 'cnt', 1)
         if tb_logger:
-            tb_logger.add_scalar(f'Train/loss_pix', l_pix, current_iter)
+            tb_logger.add_scalar(f'Train/loss_pix', loss, current_iter)
         # self.log_dict = self.reduce_loss_dict(loss_dict)
 
         if self.ema_decay > 0:
@@ -224,7 +201,7 @@ class ImageCleanModel(BaseModel):
         else: #here
             self.net_g.eval()
             with torch.no_grad():
-                _, pred = self.net_g(self.lq, self.hqs)
+                pred = self.net_g(self.lq, self.hqs)
             self.output = pred
             self.net_g.train() # 设置模型回到训练模式
 
