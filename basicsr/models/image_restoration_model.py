@@ -83,8 +83,8 @@ class ImageCleanModel(BaseModel):
         if load_path is not None: # loading moe weight, set
             self.load_network(self.net_g.moe, load_path,
                               self.opt['path'].get('strict_load_g', True), param_key=self.opt['path'].get('param_key', 'params'))
-            for param in self.net_g.moe.parameters():
-                param.requires_grad = False
+            # for param in self.net_g.moe.parameters():
+            #     param.requires_grad = False
         # 初始化训练设置
         if self.is_train:
             self.init_training_settings()
