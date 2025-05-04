@@ -7,3 +7,5 @@ note
 datasets/
 *.log
 *.out
+try*
+**/*backup*

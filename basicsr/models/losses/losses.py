@@ -2,8 +2,10 @@ import torch
 from torch import nn as nn
 from torch.nn import functional as F
 import numpy as np
+import lpips
 
 from basicsr.models.losses.loss_util import weighted_loss
+from pdb import set_trace as stx
 
 _reduction_modes = ['none', 'mean', 'sum']
 
@@ -41,16 +43,37 @@ class L1Loss(nn.Module):
         self.loss_weight = loss_weight
         self.reduction = reduction
 
-    def forward(self, pred, target, weight=None, **kwargs):
+    def forward(self, pred, target, **kwargs):
         """
         Args:
-            pred (Tensor): of shape (N, C, H, W). Predicted tensor.
-            target (Tensor): of shape (N, C, H, W). Ground truth tensor.
-            weight (Tensor, optional): of shape (N, C, H, W). Element-wise
-                weights. Default: None.
+            pred (Tensor): of shape (N, 3, H, W). Predicted tensor.
+            target (Tensor): of shape (N, 3, H, W). Ground truth tensor.
         """
         return self.loss_weight * l1_loss(
-            pred, target, weight, reduction=self.reduction)
+            pred, target, reduction=self.reduction)
+
+
+class LpipsLoss(nn.Module):
+    def __init__(self, loss_weight=1.0, ):
+        super(LpipsLoss, self).__init__()
+        self.loss_weight = loss_weight
+        self.lpips_model = lpips.LPIPS(net='alex')
+        self.lpips_model.eval()  
+        for param in self.lpips_model.parameters():
+            param.requires_grad = False
+
+    def forward(self, pred, target, **kwargs):
+        """
+        Args:
+            pred (Tensor): of shape (N, 3, H, W). [0,1] Predicted tensor.
+            target (Tensor): of shape (N, 3, H, W). [0,1] Ground truth tensor.
+        """
+        # norm to [-1,1]
+        pred = pred * 2 - 1
+        target = target * 2 - 1
+        res = self.lpips_model(pred, target)
+        return self.loss_weight * res.mean()
+
 
 class MSELoss(nn.Module):
     """MSE (L2) loss.

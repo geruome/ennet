@@ -65,10 +65,10 @@ class BaseModel():
     def get_current_log(self):
         res = self.log_dict
         cnt = res.pop('cnt')
-        for key,val in res.items():
+        for key, val in res.items():
             if key!='cnt':
                 res[key] /= cnt
-        self.log_dict = {'l_pix':0, 'l_moe':0, 'loss':0, 'cnt':0}
+        self.log_dict = {}
         return res
 
     def model_to_device(self, net): #把net放到设备上

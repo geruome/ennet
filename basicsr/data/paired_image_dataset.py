@@ -18,6 +18,7 @@ import time
 from glob import glob
 from natsort import natsorted
 import json
+import copy
 # from basicsr.data.generate_hq import Processes_Controller
 # from basicsr.utils.img_util import DWTs, IWTs, padding_img
 # from basicsr.models.archs.ennet_arch import ennet
@@ -104,8 +105,7 @@ class Dataset_PairedImage(data.Dataset):
         index = index % len(self.paths)
         # image range: [0, 1], float32.
         if self.use_cache and index in self.cache:
-            ret = self.cache[index]
-            # return ret
+            ret = copy.deepcopy(self.cache[index])
             for key in ['lq', 'hqs', 'gt']:
                 ret[key] = ret[key].type(torch.float32) / 255.
             return ret
@@ -120,8 +120,10 @@ class Dataset_PairedImage(data.Dataset):
 
         ret = {'lq': img_lq, 'hqs': img_hqs, 'gt': img_gt, 'img_name': img_name}
         if self.use_cache:
-            self.cache[index] = ret
-        # lq,gt:ndarray. hqs:tensor
+            self.cache[index] = copy.deepcopy(ret)
+        
+        for key in ['lq', 'hqs', 'gt']:
+            ret[key] = ret[key].type(torch.float32) / 255.
         return ret
     
     def __len__(self):

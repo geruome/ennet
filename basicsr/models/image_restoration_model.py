@@ -21,7 +21,6 @@ import torch.nn.functional as F
 from functools import partial
 
 from pdb import set_trace as stx
-
 from skimage import img_as_ubyte
 
 # 训练时开启混合增强
@@ -75,6 +74,10 @@ def calculate_psnr_tensor(hqs, gt):
     return psnr  # (B,N)
 
 
+def dict_add(dic, key, val):
+    dic[key] = dic.get(key, 0) + val
+
+
 class ImageCleanModel(BaseModel):
     def __init__(self, opt):
         super(ImageCleanModel, self).__init__(opt)
@@ -120,18 +123,17 @@ class ImageCleanModel(BaseModel):
             load_path = self.opt['path'].get('pretrain_network_g', None)
             if load_path is not None:
                 self.load_network(self.net_g_ema, load_path,
-                                  self.opt['path'].get('strict_load_g',
-                                                       True), 'params_ema')
+                                  self.opt['path'].get('strict_load_g', True), 'params_ema')
             else:
                 self.model_ema(0)  # copy net_g weight
             self.net_g_ema.eval()
 
-        # define losses 使用配置文件中的信息实例化Loss，并移动到设备
-        if train_opt.get('pixel_opt'):
-            pixel_type = train_opt['pixel_opt'].pop('type')
-            cri_pix_cls = getattr(loss_module, pixel_type)  
-            self.cri_pix = cri_pix_cls(**train_opt['pixel_opt']).to(
-                self.device)      #如何写 weighted loss 呢？传参构造Loss函数
+        if train_opt.get('losses'):
+            self.loss_funcs = []
+            self.loss_names = train_opt['losses'].keys()
+            for type in train_opt['losses']:
+                func = getattr(loss_module, type)
+                self.loss_funcs.append(func(**train_opt['losses'][type]).to(self.device))
         else:
             raise ValueError('pixel loss are None.')
         self.lambda_moe = train_opt.get('lambda_moe')
@@ -186,20 +188,23 @@ class ImageCleanModel(BaseModel):
         self.output = pred # 用于validation
         loss_dict = OrderedDict()
         # pixel loss
-        l_pix = self.cri_pix(pred, self.gt)
+        losses = [loss_func(pred, self.gt) for loss_func in self.loss_funcs]
+        l_pix = sum(losses)
         self.metrics = calculate_psnr_tensor(self.hqs, self.gt)
         l_moe = F.kl_div(moe_w.log(), F.softmax(self.metrics, dim=-1))
         loss = l_pix + self.lambda_moe*l_moe
         loss.backward()
-        if self.opt['train']['use_grad_clip']:
-            torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), 0.01)
+        if self.opt['train'].get('grad_clip', None):
+            torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), self.opt['train']['grad_clip'])
         self.optimizer_g.step()
+
         if not hasattr(self, 'log_dict'):
-            self.log_dict = {'l_pix':0, 'l_moe':0, 'loss':0, 'cnt':0}
-        self.log_dict['l_pix'] += l_pix
-        self.log_dict['l_moe'] += l_moe
-        self.log_dict['loss'] += loss
-        self.log_dict['cnt'] += 1
+            self.log_dict = {}
+        for name, _loss in zip(self.loss_names, losses):
+            dict_add(self.log_dict, name, _loss)
+        dict_add(self.log_dict, 'l_moe', l_moe)
+        dict_add(self.log_dict, 'loss', loss)
+        dict_add(self.log_dict, 'cnt', 1)
         if tb_logger:
             tb_logger.add_scalar(f'Train/loss_pix', l_pix, current_iter)
         # self.log_dict = self.reduce_loss_dict(loss_dict)
@@ -312,8 +317,7 @@ class ImageCleanModel(BaseModel):
                         ret = getattr(metric_module, metric_type)(visuals['result'], visuals['gt'], **opt_) 
                         self.metric_results[name] += ret
             cnt += 1
-
-            self.metric_results['l_pix'] += self.cri_pix(visuals['result'], visuals['gt']) # here , vali时输出loss
+            # self.metric_results['l_pix'] += self.cri_pix(visuals['result'], visuals['gt']) # here , validate时输出loss
 
         # 计算平均指标 
         current_metric = 0.

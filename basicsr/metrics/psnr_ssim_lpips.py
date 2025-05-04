@@ -80,6 +80,10 @@ def calculate_ssim(img1, img2, gt_mean=Use_GT_mean):
         raise ValueError('Wrong input image dimensions.')
 
 
+def l1_loss(pred, target) -> float:
+    return np.mean(np.abs(pred -target))
+
+
 def ssim(img1, img2):
     C1 = (0.01 * 255)**2
     C2 = (0.03 * 255)**2

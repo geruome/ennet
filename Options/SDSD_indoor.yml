@@ -35,7 +35,7 @@ datasets:
     # pin_memory: true 将加载的数据张量固定在CPU内存中以提速，但需要cpu内存足够
     ### -------------Progressive training---------------------------
     mini_batch_sizes: [4,2,1]
-    iters: [30000,30000,90000]
+    iters: [20000,20000,20000]
     # gt_size: 384   # Max patch size for progressive training
     # gt_sizes: [128,160,192,256,320,384]  # Patch sizes for progressive training.
     # ### ------------------------------------------------------------
@@ -54,9 +54,12 @@ network_g:
   type: Ennet  # network name, in basicsr/models/archs/
   channels: 3
   block_size: 16
-  kernal_sizes: [3,7,11,15]
+  conv_dim: 128
+  kernal_sizes: [3, 7, 11, 15]
+  down_channels: [32, 64, 128]
   emb_dim: 256
   n_layers: 2
+  up_channels: [128, 64, 16]
 
 
 # path
@@ -67,14 +70,14 @@ path:
 
 # 训练设置
 train:
-  total_iter: 150000
+  total_iter: 60000
   warmup_iter: -1 # no warm up
-  use_grad_clip: true
+  grad_clip: 0.5
   lambda_moe: !!float 0.5
 
   scheduler: # 学习率调整
     type: CosineAnnealingRestartCyclicLR # 带重启的余弦退火学习率调度
-    periods: [100000, 50000]  # 每个余弦退火周期的持续时间
+    periods: [30000, 30000]  # 每个余弦退火周期的持续时间
     restart_weights: [1,1] # 每次重启时的学习率权重
     eta_mins: [0.0002, 0.00001] # 每个周期的最小学习率值
   
@@ -89,10 +92,12 @@ train:
     weight_decay: !!float 1e-4
     betas: [0.9, 0.999]
   
-  pixel_opt: # losses
-    type: L1Loss
-    loss_weight: 1
-    reduction: mean
+  losses: # losses
+    L1Loss:
+      loss_weight: 1
+      reduction: mean
+    LpipsLoss:
+      loss_weight: 0.5
 
 
 # validation settings
@@ -112,6 +117,8 @@ val:
       type: calculate_ssim
     lpips: 
       type: calculate_lpips
+    l_pix:
+      type: l1_loss
 
 # logging settings
 logger:

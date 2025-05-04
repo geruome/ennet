@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import math
 from dataclasses import dataclass
 from pdb import set_trace as stx
-# import cv2
+import pywt
 
 
 def count_parameters(model):
@@ -66,7 +66,7 @@ class MOE(nn.Module):
             nn.ReLU(), nn.Dropout(0.2),
             nn.Linear(128, N)
         )
-        print("total parameter num of MOE: ", count_parameters(self), '-------------------------')
+        print(f"total parameter num of MOE: {count_parameters(self)}, -------------------------", flush=True)
 
     def forward(self, x):
         for layer in self.conv_layers:
@@ -142,61 +142,185 @@ class AttentionConfig:
     n_head: int = 1
 
 
-class MRFFI(nn.Module):
+def lg2(factor):
+    num = int(math.log2(factor))
+    assert 2**num == factor
+    return num
+
+
+class DownSample(nn.Module):
+    def __init__(self, channels, factor):
+        super(DownSample, self).__init__()
+        num = lg2(factor)
+        assert len(channels) == num+1
+        layers = []
+
+        for i in range(num):
+            next_channel = channels[i+1]
+            layers.append(nn.Conv2d(channels[i], next_channel, kernel_size=3, stride=2, padding=1))
+            layers.append(nn.BatchNorm2d(next_channel))
+            layers.append(nn.ReLU(inplace=True))
+
+        self.patch_embed = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.patch_embed(x)
+
+
+class BlurPool(nn.Module):
+    def __init__(self, channels):
+        super(BlurPool, self).__init__()
+        kernel = torch.tensor([1., 2., 1.])
+        kernel = kernel[:, None] * kernel[None, :]
+        kernel = kernel / kernel.sum()  # 3x3 Gaussian blur kernel
+        self.register_buffer('kernel', kernel[None, None, :, :].repeat(channels, 1, 1, 1))
+        self.channels = channels
+        self.padding = 1
+
+    def forward(self, x):
+        return F.conv2d(x, self.kernel, stride=1, padding=self.padding, groups=self.channels)
+
+
+class UpSample(nn.Module):
+    # pixelshuffle upsample
+    def __init__(self, channels, factor):
+        super(UpSample, self).__init__()
+        num = lg2(factor)
+        assert len(channels) == num+1
+
+        layers = []
+        for i in range(num):
+            layers.append(nn.Conv2d(channels[i], channels[i], kernel_size=3, padding=1))
+            layers.append(nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False))
+            layers.append(nn.Conv2d(channels[i], channels[i+1], kernel_size=3, padding=1))
+            layers.append(BlurPool(channels[i+1]))
+            layers.append(nn.ReLU(inplace=True))
+        self.upsampler = nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor):
+        return self.upsampler(x)
+
+
+class Denoiser(nn.Module):
     def __init__(self, opt):
-        super(MRFFI, self).__init__()
+        super(Denoiser, self).__init__()
+        # opt['channels'] = 3
+        channels = opt['channels']
+        features = 16
+        num_layers = 4
+        layers = [nn.Sequential(nn.Conv2d(channels, features, kernel_size=3, stride=1, padding=1), nn.ReLU(inplace=True))]
+        for i in range(num_layers):
+            layers.append(nn.Sequential(nn.Conv2d(features, features, kernel_size=3, padding=1), nn.ReLU(inplace=True)))
+        layers.append(nn.Sequential(nn.Conv2d(features, 3, 1, 1), nn.ReLU(inplace=True))) # 1*1
+        self.layers = nn.Sequential(*layers)
+
+    def forward(self, x):
+        # [B,C,H,W]
+        res = self.layers(x)
+        return x + res
+
+
+class BlockMixer(nn.Module):
+    def __init__(self, opt):
+        super(BlockMixer, self).__init__()
         self.N = opt['num_models']
-        # self.linear = nn.Linear(self.N, 1, bias=False)
 
-        self.channels = opt['channels']
+        self.out_channels = opt['channels']
         self.emb_dim = opt['emb_dim']
+        self.conv_dim = opt['conv_dim']
+        self.dim = self.emb_dim + self.conv_dim
         self.P = opt['block_size']
-        assert self.P%4==0, 'block_size must be multiple of 4 !!!'
+        in_channels = self.out_channels*self.N
 
-        stride = self.P//2
-        padding = stride//2
-        in_channels = self.channels*self.N
-        attn_config = AttentionConfig(**dict(n_embd=self.emb_dim))
-
-        # self.linear = nn.Conv2d(in_channels, self.channels, 1)
         self.linear = nn.Linear(self.N, 1, bias=False)
 
-        self.conv = nn.Conv2d(in_channels, self.emb_dim, kernel_size=self.P, stride=stride, padding=padding)
-        self.up_conv = nn.ConvTranspose2d(self.emb_dim, self.channels, kernel_size=self.P, stride=stride, padding=padding)
+        self.down_channels = [in_channels] + opt['down_channels'] + [self.dim]
+        self.downsample = DownSample(channels=self.down_channels, factor=self.P)
+        # self.downsample = nn.Conv2d(in_channels, self.dim, kernel_size=self.P, stride=self.P, )
+        
+        attn_config = AttentionConfig(**dict(n_embd=self.emb_dim))
         self.attn_layers = nn.ModuleList( Block(attn_config) for _ in range(opt['n_layers']))
 
         self.ksizes = opt['kernal_sizes']
         assert all(i%2==1 for i in self.ksizes)
-        ch = self.emb_dim
+        ch = self.conv_dim
         assert ch%len(self.ksizes)==0
         ch = ch//len(self.ksizes)
         self.convs = nn.ModuleList([
             nn.Conv2d(ch, ch, kernel_size=k, padding=k//2) for k in self.ksizes
         ])
 
+        self.up_channels = [self.dim] + opt['up_channels'] + [self.out_channels]
+        self.upsample = UpSample(channels=self.up_channels, factor=self.P)
+        # self.upsample = nn.ConvTranspose2d(self.dim, self.out_channels, kernel_size=self.P, stride=self.P, )
+        self.denoiser = Denoiser(opt)
 
     def forward(self, x: torch.Tensor):
         '''
         x: (B,N,c,h,w), [0,1]
         '''
         B, N, c, h, w = x.shape
+        assert h%self.P==0 and w%self.P==0
         x0 = x.permute(0, 2, 3, 4, 1)
         x0 = self.linear(x0).squeeze(-1) # B,c,h,w
 
         x = x.reshape(B, N*c, h, w)
-        x = self.conv(x) # (B,dim,hp,wp)
-        B, dim, hp, wp = x.shape
-        x1 = x.permute(0, 2, 3, 1).reshape(B, hp*wp, dim)
+        x = self.downsample(x) # (B,dim,hp,wp)
+        x_atten, x_conv = torch.split(x, [self.emb_dim, self.conv_dim], dim=1) # (B,emb_dim,h,w), (B,conv_dim,h,w) 
+        _, emb_dim, hp, wp = x_atten.shape
+        x1 = x_atten.permute(0, 2, 3, 1).reshape(B, hp*wp, emb_dim)
         for layer in self.attn_layers:
             x1 = layer(x1)
-        x1 = x1.permute(0, 2, 1).reshape(B, dim, hp, wp)
+        x1 = x1.permute(0, 2, 1).reshape(B, emb_dim, hp, wp)
 
-        splits = torch.chunk(x, len(self.ksizes), dim=1)  # (B,dim/4,hp,wp) * 4
+        splits = torch.chunk(x_conv, len(self.ksizes), dim=1)  # (B,conv_dim/4,hp,wp) * 4
         x2 = [conv(s) for conv, s in zip(self.convs, splits)]
-        x2 = torch.cat(x2, dim=1) # (B,dim,hp,wp)
-        res = self.up_conv(x1+x2) + x0 # B,c,h,w
-        # res = torch.clamp(res, 0, 1)
+        x2 = torch.cat(x2, dim=1) # (B,conv_dim,hp,wp)
+        res = torch.cat([x1,x2], dim=1)
+        # stx()
+        res = self.upsample(res) + x0 # B,c,h,w
+        res = self.denoiser(res)
         return res
+    
+
+def create_wavelet_filter(wave='haar', in_size=3, out_size=3, type=torch.float):
+    w = pywt.Wavelet(wave)
+    dec_hi = torch.tensor(w.dec_hi[::-1], dtype=type)
+    dec_lo = torch.tensor(w.dec_lo[::-1], dtype=type)
+    dec_filters = torch.stack([dec_lo.unsqueeze(0) * dec_lo.unsqueeze(1),
+                               dec_lo.unsqueeze(0) * dec_hi.unsqueeze(1),
+                               dec_hi.unsqueeze(0) * dec_lo.unsqueeze(1),
+                               dec_hi.unsqueeze(0) * dec_hi.unsqueeze(1)], dim=0)
+
+    dec_filters = dec_filters[:, None].repeat(in_size, 1, 1, 1)
+
+    rec_hi = torch.tensor(w.rec_hi[::-1], dtype=type).flip(dims=[0])
+    rec_lo = torch.tensor(w.rec_lo[::-1], dtype=type).flip(dims=[0])
+    rec_filters = torch.stack([rec_lo.unsqueeze(0) * rec_lo.unsqueeze(1),
+                               rec_lo.unsqueeze(0) * rec_hi.unsqueeze(1),
+                               rec_hi.unsqueeze(0) * rec_lo.unsqueeze(1),
+                               rec_hi.unsqueeze(0) * rec_hi.unsqueeze(1)], dim=0)
+
+    rec_filters = rec_filters[:, None].repeat(out_size, 1, 1, 1)
+
+    return dec_filters, rec_filters
+
+
+def wavelet_transform(x, filters):
+    b, c, h, w = x.shape
+    pad = (filters.shape[2] // 2 - 1, filters.shape[3] // 2 - 1)
+    x = F.conv2d(x, filters, stride=2, groups=c, padding=pad)
+    x = x.reshape(b, c, 4, h // 2, w // 2)
+    x = x[:, :, 0, :, :]
+    return x
+
+
+def inverse_wavelet_transform(x, filters):
+    b, c, _, h_half, w_half = x.shape
+    pad = (filters.shape[2] // 2 - 1, filters.shape[3] // 2 - 1)
+    x = x.reshape(b, c * 4, h_half, w_half)
+    x = F.conv_transpose2d(x, filters, stride=2, groups=c, padding=pad)
+    return x
 
 
 class Ennet(nn.Module):
@@ -204,26 +328,62 @@ class Ennet(nn.Module):
         super(Ennet, self).__init__()
         self.N = opt['num_models']
         self.moe = MOE(self.N)
-        self.mrffi = MRFFI(opt)
-        print("total parameter num of Ennet: ", count_parameters(self), '-------------------------')
+        self.blockmixers = nn.ModuleList([BlockMixer(opt) for _ in range(2)])
+        self.dec_filter, self.rec_filter = create_wavelet_filter(in_size=opt['channels'], out_size=opt['channels'])
+        self.dec_filter = nn.Parameter(self.dec_filter, requires_grad=False)
+        self.rec_filter = nn.Parameter(self.rec_filter, requires_grad=False)
+        print(f"total parameter num of Ennet: {count_parameters(self)}-------------------------", flush=True)
+        # self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.LayerNorm):
+            nn.init.ones_(m.weight)
+            nn.init.zeros_(m.bias)
+
+    def multi_layer_enhance(self, x, xn, dep):
+        # moe_w = self.moe(x)
+        # xn = xn * moe_w[..., None, None, None]
+        res = self.blockmixers[dep-1](xn)
+        if dep==1:
+            return res
+        x = wavelet_transform(x, self.dec_filter)
+        B, N, C, H, W = xn.shape
+        xn = xn.flatten(0, 1)
+        xn = wavelet_transform(xn, self.dec_filter)
+        xn = xn.reshape(B, N, *xn.shape[1:])
+        nres = self.multi_layer_enhance(x, xn, dep-1)
+        nres = F.interpolate(nres, scale_factor=2, mode='bilinear', align_corners=False)
+        return res + nres
 
     def forward(self, x, xn):
         '''
         x.shape = B,C,H,W
         xn.shape = B,N,C,H,W
         '''
-        moe_weight = self.moe(x) # B,N
-        B, N, C, H, W = xn.shape
-        xn = xn * moe_weight.view(B, self.N, 1, 1, 1)
-        res = self.mrffi(xn)
-        return moe_weight, res
+        moe_w0 = self.moe(x) # B,N
+        res = self.multi_layer_enhance(x, xn, dep=2)
+        return moe_w0, res
 
 
 if __name__ == '__main__':
-    B, C, H, W = 4, 3, 512, 960
-    N = 6 
+    
+
+    B, C, H, W = 4, 3, 384, 384
+    N = 6
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    opt = {'channels': 3, 'block_size': 16, 'kernal_sizes': [3,7,11,15], 'emb_dim': 256, 'n_layers': 2, 'num_models': 6}
+    opt = {'num_models': N, 'channels': 3, 'block_size': 8, 
+           'conv_dim': 64, 'kernal_sizes': [3,5,7,9], 'down_channels': [48, 96], # 18,48,96,192
+           'emb_dim': 128, 'n_layers': 2, 'up_channels': [64, 16]} # 192, 64, 16, 3
+    # opt = {'channels': 3, 'block_size': 16, 'kernal_sizes': [3,7,11,15], 'dim': 512, 'n_layers': 2, 'num_models': N}
+
     model = Ennet(opt)
     x = torch.randn(B, C, H, W)
     xn = torch.randn(B, N, C, H, W)

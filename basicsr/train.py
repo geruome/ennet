@@ -261,7 +261,7 @@ def main():
             mini_batch_size = mini_batch_sizes[bs_j]
 
             if bs_j != pre_bs_j:
-                logger.info('\n Updating Batch_Size to {} at iter {}\n'.format(mini_batch_size * torch.cuda.device_count(), current_iter))
+                logger.info('\nUpdating Batch_Size to {} at iter {}\n'.format(mini_batch_size * torch.cuda.device_count(), current_iter))
 
             # lq = train_data['lq']
             # hqs = train_data['hqs']
