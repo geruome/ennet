@@ -89,7 +89,7 @@ train:
 val:
   # window_size: 4
   val_freq: !!float 5000
-  save_img: true
+  save_img: false
   save_img_prob: 0.2
   rgb2bgr: true
   use_image: true # ????

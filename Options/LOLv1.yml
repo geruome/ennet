@@ -8,38 +8,45 @@ scale: 1
 manual_seed: 42
 
 ensemble_models: ['retinexformer', 'cidnet', 'glare', 'flw', 'lmt', 'lytnet'] # 'retinexformer', 'cidnet', 'glare', 'lytnet', 'flw', 'lmt'
-dataset_name: LOLv2s
-exp_note: LOLv2s
+dataset_name: LOLv1
+exp_note: LOLv1
 
 # dataset and data loader settings
 datasets:
   train:
     name: TrainSet
     type: Dataset_PairedImage
-    dataroot_gt: /root/autodl-tmp/ennet/datasets/LOLv2/Synthetic/Train/Normal
-    dataroot_lq: /root/autodl-tmp/ennet/datasets/LOLv2/Synthetic/Train/Low
+    dataroot_gt: /root/autodl-tmp/ennet/datasets/LOLv1/Train/target
+    dataroot_lq: /root/autodl-tmp/ennet/datasets/LOLv1/Train/input
     geometric_augs: true # 开启几何数据增强
     filename_tmpl: '{}' # Template for each filename.
     io_backend:
       type: disk
-    use_cache: false
+    use_cache: true
 
+    # data loader
     use_shuffle: true
     num_worker_per_gpu: 0
     batch_size_per_gpu: 4 # 
+    # iters: [100000]
     dataset_enlarge_ratio: 1
     prefetch_mode: cuda
-    mini_batch_sizes: [4,4,4]
-    iters: [30000,30000,30000]
+    # pin_memory: true 将加载的数据张量固定在CPU内存中以提速，但需要cpu内存足够
+    ### -------------Progressive training---------------------------
+    mini_batch_sizes: [4,2,1]
+    iters: [20000,20000,40000]
+    # gt_size: 384   # Max patch size for progressive training
+    # gt_sizes: [128,160,192,256,320,384]  # Patch sizes for progressive training.
+    # ### ------------------------------------------------------------
 
   val:
     name: ValSet
     type: Dataset_PairedImage
-    dataroot_gt: /root/autodl-tmp/ennet/datasets/FiveK/test/GT # /root/autodl-tmp/ennet/datasets/LOLv2/Synthetic/Test/Normal
-    dataroot_lq: /root/autodl-tmp/ennet/datasets/FiveK/test/LQ # /root/autodl-tmp/ennet/datasets/LOLv2/Synthetic/Test/Low
+    dataroot_gt: /root/autodl-tmp/ennet/datasets/LOLv1/Test/target
+    dataroot_lq: /root/autodl-tmp/ennet/datasets/LOLv1/Test/input
     io_backend:
       type: disk
-    use_cache: false
+    use_cache: true
 
 
 network_g:
@@ -56,19 +63,18 @@ network_g:
 
 # path
 path:
-  # moe_weight: experiments/05050100_LOLv2s_moe/models/net_g_10000.pth
   strict_load_g: true
   resume_state: ~
 
 # 训练设置
 train:
-  total_iter: 90000
+  total_iter: 80000
   warmup_iter: -1 # no warm up
   grad_clip: 1
 
   scheduler: # 学习率调整
     type: CosineAnnealingRestartCyclicLR # 带重启的余弦退火学习率调度
-    periods: [40000, 50000]  # 每个余弦退火周期的持续时间
+    periods: [40000, 40000]  # 每个余弦退火周期的持续时间
     restart_weights: [1,1] # 每次重启时的学习率权重
     eta_mins: [0.0002, 0.00001] # 每个周期的最小学习率值
   
@@ -87,17 +93,17 @@ train:
     L1Loss:
       loss_weight: 1
       reduction: mean
-    LpipsLoss:
-      loss_weight: 0.5
+    # LpipsLoss:
+    #   loss_weight: 0.5
 
 # validation settings
 val:
   # window_size: 4
   val_freq: !!float 5000
   save_img: true
-  save_img_prob: 0.2
+  save_img_prob: 1
   rgb2bgr: true
-  use_image: true # np if true else tensor
+  use_image: true # ????
   max_minibatch: 8
 
   metrics:

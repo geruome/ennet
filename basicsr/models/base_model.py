@@ -76,14 +76,14 @@ class BaseModel():
         cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "")
         # print("--------  ", os.environ.get("CUDA_VISIBLE_DEVICES", ""))
         device_count = len(cuda_devices.split(",")) if cuda_devices else 0
-        if self.opt['dist']:
-            find_unused_parameters = self.opt.get('find_unused_parameters', False)
-            net = DistributedDataParallel(
-                net,
-                device_ids=[torch.cuda.current_device()],
-                find_unused_parameters=find_unused_parameters)
-        elif device_count > 1:
-            net = DataParallel(net)
+        # if self.opt['dist']:
+        #     find_unused_parameters = self.opt.get('find_unused_parameters', False)
+        #     net = DistributedDataParallel(
+        #         net,
+        #         device_ids=[torch.cuda.current_device()],
+        #         find_unused_parameters=find_unused_parameters)
+        # elif device_count > 1:
+        #     net = DataParallel(net)
         return net
 
     def setup_schedulers(self): #根据opt中的scheduler类型，为每个optimizer创建对应的scheduler

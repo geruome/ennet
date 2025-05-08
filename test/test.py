@@ -33,13 +33,7 @@ def parse_options(is_train=True):
     
     args = parser.parse_args()
     opt = parse(args.opt, is_train=is_train)  # parse用的是basicsr的工具，填加了一些参数(root,experiment)
-    # gpu_list = ','.join(str(x) for x in args.gpu_id)
-    # os.environ['CUDA_VISIBLE_DEVICES'] = gpu_list
-    # if opt.get('devices', ""):
-    #     os.environ["CUDA_VISIBLE_DEVICES"] = opt['devices']
-    # print('export CUDA_VISIBLE_DEVICES=' + gpu_list)
-    
-    # distributed settings 
+
     if args.launcher == 'none':
         opt['dist'] = False
         print('Disable distributed.', flush=True)
@@ -94,32 +88,7 @@ def create_train_val_dataloader(opt, logger):
         dataset_opt['dataset_name'] = dataset_name 
         
         if phase == 'train':
-            dataset_enlarge_ratio = dataset_opt.get('dataset_enlarge_ratio', 1)
-            train_set = create_dataset(dataset_opt)   # pair_image_dataset类，里面包含文件列表，进程和moe?            
-            train_sampler = EnlargedSampler(train_set, opt['world_size'], opt['rank'], dataset_enlarge_ratio)  #采样器，用于分布式训练?
-            
-            train_loader = create_dataloader( 
-                train_set,
-                dataset_opt,
-                # num_gpu=opt['num_gpu'],
-                dist=opt['dist'],
-                sampler=train_sampler,
-                seed=opt['manual_seed'])
-            
-            # 计算并记录迭代信息
-            num_iter_per_epoch = math.ceil(
-                len(train_set) * dataset_enlarge_ratio /
-                (dataset_opt['batch_size_per_gpu'] * opt['world_size']))  #一个epoch遍历一次数据
-            total_iters = int(opt['train']['total_iter'])
-            total_epochs = math.ceil(total_iters / (num_iter_per_epoch)) #一个iteration就是一次 inference + backward，总的iteration是不变的
-            logger.info(
-                'Training statistics:'
-                f'\n\tNumber of train images: {len(train_set)}'
-                f'\n\tDataset enlarge ratio: {dataset_enlarge_ratio}'
-                f'\n\tBatch size per gpu: {dataset_opt["batch_size_per_gpu"]}'
-                f'\n\tWorld size (gpu number): {opt["world_size"]}'
-                f'\n\tRequire iter number per epoch: {num_iter_per_epoch}'
-                f'\n\tTotal epochs: {total_epochs}; iters: {total_iters}.')
+            continue
 
         elif phase == 'val':
             val_set = create_dataset(dataset_opt)
@@ -139,15 +108,11 @@ def create_train_val_dataloader(opt, logger):
     return train_loader, train_sampler, val_loader, total_epochs, total_iters
 
 def main():
-
-    # parse options, set distributed setting, set ramdom seed
     opt = parse_options(is_train=True)
     
-    # 加速
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.deterministic = True
     
-    # automatic resume ..
     state_folder_path = 'experiments/{}/training_states/'.format(opt['name']) #状态路径
     import os
     try:
@@ -155,10 +120,6 @@ def main():
     except:
         states = []
     resume_state = None
-    # if len(states) > 0:  #如果路径已存在 (已经训练到)
-    #     max_state_file = '{}.state'.format(max([int(x[0:-6]) for x in states]))
-    #     resume_state = os.path.join(state_folder_path, max_state_file)
-    #     opt['path']['resume_state'] = resume_state
     if opt['path'].get('resume_state'):
         device_id = torch.cuda.current_device()
         resume_state = torch.load(
@@ -167,47 +128,25 @@ def main():
     else:
         resume_state = None
 
-    # mkdir for experiments and logger
     if resume_state is None: 
         make_exp_dirs(opt) # 建文件夹： ennet_tower / {models, training_states, visualization, _arch.py}
     
-    # initialize loggers
     logger = init_loggers(opt)
     
-    # create train and validation dataloaders
     result = create_train_val_dataloader(opt, logger)
     train_loader, train_sampler, val_loader, total_epochs, total_iters = result
 
-    # if resume_state:  # resume training
-    #     check_resume(opt, resume_state['iter'])
-    #     # print(resume_state)
-    #     model = create_model(opt)
-    #     model.resume_training(resume_state)  # handle optimizers and schedulers
-    #     logger.info(f"Resuming training from epoch: {resume_state['epoch']}, "
-    #                 f"iter: {resume_state['iter']}.")
-    #     start_epoch = resume_state['epoch']
-    #     current_iter = resume_state['iter']
-    #     best_metric = resume_state['best_metric']
-    #     # best_psnr = best_metric['psnr']
-    #     # best_iter = best_metric['iter']
-    #     # logger.info(f'best psnr: {best_psnr} from iteration {best_iter}')
-
     model = create_model(opt)    
-    if True: # resume training
-        current_iter = 0
-        start_epoch = 0
-        weight_path = 'experiments/LOLv1_03052154/best_psnr_26.05_16700.pth'
-        checkpoint = torch.load(weight_path)
-        model.net_g.load_state_dict(checkpoint['params'])
-        best_metric = {'iter': 0}
-        for k, v in opt['val']['metrics'].items():
-            best_metric[k] = 0
-    else:
-        start_epoch = 0
-        current_iter = 0
-        best_metric = {'iter': 0}
-        for k, v in opt['val']['metrics'].items():
-            best_metric[k] = 0
+
+    current_iter = 0
+    start_epoch = 0
+    weight_path = 'experiments/05072338_LOLv2s/models/net_g_90000.pth'
+    # weight_path = 'experiments/05081551_LOLv1/models/net_g_20000.pth'
+    checkpoint = torch.load(weight_path)
+    model.net_g.load_state_dict(checkpoint['params'])
+    best_metric = {'iter': 0}
+    for k, v in opt['val']['metrics'].items():
+        best_metric[k] = 0
 
     # create message logger (formatted outputs)
     msg_logger = MessageLogger(opt, current_iter, None)
@@ -232,8 +171,6 @@ def main():
     groups = np.array([sum(iters[0:i + 1]) for i in range(0, len(iters))])
     batch_size = opt['datasets']['train'].get('batch_size_per_gpu')
     mini_batch_sizes = opt['datasets']['train'].get('mini_batch_sizes')
-    # gt_size = opt['datasets']['train'].get('gt_size')
-    # mini_gt_sizes = opt['datasets']['train'].get('gt_sizes')
 
     epoch = start_epoch
 

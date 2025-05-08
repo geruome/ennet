@@ -5,7 +5,11 @@ import math
 from dataclasses import dataclass
 from pdb import set_trace as stx
 import pywt
-from basicsr.models.archs.Moe_arch import Moe # 
+if __name__ == '__main__':
+    from Moe_arch import Moe
+else:
+    from basicsr.models.archs.Moe_arch import Moe # 
+
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -256,15 +260,40 @@ def inverse_wavelet_transform(x, filters):
     return x
 
 
+def pad_to_factor(tensor, factor=16):
+    H, W = tensor.shape[-2:]
+    pad_H = (factor - H % factor) % factor
+    pad_W = (factor - W % factor) % factor
+    pad_top = pad_H // 2
+    pad_bottom = pad_H - pad_top
+    pad_left = pad_W // 2
+    pad_right = pad_W - pad_left
+
+    tensor_padded = F.pad(tensor, (pad_left, pad_right, pad_top, pad_bottom))  # Pad last two dims. 'replicate'
+    return tensor_padded, (pad_top, pad_bottom, pad_left, pad_right)
+
+
+def crop_to_original(tensor_padded, pad):
+    pad_top, pad_bottom, pad_left, pad_right = pad
+    return tensor_padded[..., 
+                         pad_top : -pad_bottom if pad_bottom > 0 else None,
+                         pad_left : -pad_right if pad_right > 0 else None]
+
+
 class Ennet(nn.Module):
     def __init__(self, opt):
         super(Ennet, self).__init__()
         self.N = opt['num_models']
+        self.n_wt = opt.get('wt_layers', 1)
+        self.padding_factor = opt['block_size'] * (2**self.n_wt)
+
         self.moe = Moe(opt)
         self.blockmixers = nn.ModuleList([BlockMixer(opt) for _ in range(2)])
+        
         self.dec_filter, self.rec_filter = create_wavelet_filter(in_size=opt['channels'], out_size=opt['channels'])
         self.dec_filter = nn.Parameter(self.dec_filter, requires_grad=False)
         self.rec_filter = nn.Parameter(self.rec_filter, requires_grad=False)
+
         print(f"total parameter num of Ennet: {count_parameters(self)}-------------------------", flush=True)
         # self.apply(self._init_weights)
 
@@ -284,8 +313,8 @@ class Ennet(nn.Module):
     def multi_layer_enhance(self, x, xn, dep):
         moe_w = self.moe(x)
         xn = xn * moe_w[..., None, None, None]
-        res = self.blockmixers[dep-1](xn)
-        if dep==1:
+        res = self.blockmixers[dep](xn)
+        if dep==0:
             return res
         x = wavelet_transform(x, self.dec_filter)
         B, N, C, H, W = xn.shape
@@ -301,12 +330,15 @@ class Ennet(nn.Module):
         x.shape = B,C,H,W
         xn.shape = B,N,C,H,W
         '''
-        res = self.multi_layer_enhance(x, xn, dep=2)
+        x, _ = pad_to_factor(x, self.padding_factor)
+        xn, pad_sz = pad_to_factor(xn, self.padding_factor)
+        res = self.multi_layer_enhance(x, xn, dep=self.n_wt)
+        res = crop_to_original(res, pad_sz)
         return res
 
 
 if __name__ == '__main__':
-    B, C, H, W = 4, 3, 384, 384
+    B, C, H, W = 4, 3, 400, 600
     N = 6
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     opt = {'num_models': N, 'channels': 3, 'block_size': 8, 

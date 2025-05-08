@@ -63,7 +63,7 @@ network_g:
 
 # path
 path:
-  moe_weight: experiments/05050100_LOLv2s_moe/models/net_g_10000.pth
+  # moe_weight: experiments/05050100_LOLv2s_moe/models/net_g_10000.pth
   strict_load_g: true
   resume_state: ~
 
@@ -104,7 +104,7 @@ val:
   save_img: true
   save_img_prob: 0.2
   rgb2bgr: true
-  use_image: true # ????
+  use_image: true # np if true else tensor
   max_minibatch: 8
 
   metrics:
