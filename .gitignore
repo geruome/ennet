@@ -3,7 +3,7 @@ __pycache__
 ensemble_models/
 experiments/
 visualization/
-note
+*note*
 datasets/
 *.log
 *.out

@@ -7,6 +7,7 @@ from pdb import set_trace as stx
 import sys
 sys.path.append(os.getcwd())
 import torch
+from fvcore.nn import FlopCountAnalysis, parameter_count_table
 
 import utils
 from basicsr.models import create_model
@@ -31,7 +32,7 @@ def main():
     opt = parse_options()
     set_random_seed(opt['manual_seed'])
     model = create_model(opt)
-    dataset_name = 'LOLv2s'
+    dataset_name = 'LOLv1'
     if dataset_name == 'LOLv1':
         lq_dir = '/root/autodl-tmp/ennet/datasets/LOLv1/Test/input'
         target_dir = '/root/autodl-tmp/ennet/datasets/LOLv1/Test/target'
@@ -43,8 +44,8 @@ def main():
         target_dir = f'/root/autodl-tmp/ennet/datasets/{dataset_name}/test/GT'
     ensemble_models = opt['ensemble_models']
     
-    weight_path = 'experiments/05072338_LOLv2s/models/net_g_90000.pth'
-    # weight_path = 'experiments/05081551_LOLv1/models/net_g_20000.pth'
+    # weight_path = 'experiments/05072338_LOLv2s/models/net_g_90000.pth'
+    weight_path = 'experiments/05081551_LOLv1/models/net_g_20000.pth'
     checkpoint = torch.load(weight_path)
     model.net_g.load_state_dict(checkpoint['params'])
 
@@ -79,6 +80,12 @@ def main():
         target = np.float32(utils.load_img(target_path)) / 255.
         lq = lq.to(model.device).unsqueeze(0)
         hqs = hqs.to(model.device).unsqueeze(0)
+
+        print(parameter_count_table(model.net_g))
+        flops = FlopCountAnalysis(model.net_g, (lq,hqs))
+        print(f"FLOPs: {flops.total() / 1e9:.2f} G")
+        exit(0)
+
         with torch.no_grad():
             res = model.net_g(lq, hqs).squeeze(0)
         res = torch.clamp(res, 0, 1).detach().permute(1, 2, 0).cpu().numpy()

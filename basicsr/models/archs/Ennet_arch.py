@@ -200,6 +200,7 @@ class BlockMixer(nn.Module):
         assert h%self.P==0 and w%self.P==0
         x0 = x.permute(0, 2, 3, 4, 1)
         x0 = self.linear(x0).squeeze(-1) # B,c,h,w
+        # x0 = torch.mean(x0 * moe_weights, dim=1)
 
         x = x.reshape(B, N*c, h, w)
         x = self.downsample(x) # (B,dim,hp,wp)
@@ -288,7 +289,7 @@ class Ennet(nn.Module):
         self.padding_factor = opt['block_size'] * (2**self.n_wt)
 
         self.moe = Moe(opt)
-        self.blockmixers = nn.ModuleList([BlockMixer(opt) for _ in range(2)])
+        self.blockmixers = nn.ModuleList([BlockMixer(opt) for _ in range(self.n_wt+1)])
         
         self.dec_filter, self.rec_filter = create_wavelet_filter(in_size=opt['channels'], out_size=opt['channels'])
         self.dec_filter = nn.Parameter(self.dec_filter, requires_grad=False)

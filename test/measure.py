@@ -7,10 +7,11 @@ import utils
 from pdb import set_trace as stx
 
 def measure(model):
-    res_dir = f'/root/autodl-tmp/ennet/ensemble_models/{model}/ensemble_output/FiveK'
+    dataset = 'SDSD_outdoor'
+    res_dir = f'/root/autodl-tmp/ennet/ensemble_models/{model}/ensemble_output/{dataset}'
     # target_dir = '/root/autodl-tmp/ennet/datasets/LOLv1/Test/target'
     # target_dir = '/root/autodl-tmp/ennet/datasets/LOLv2/Synthetic/Test/Normal'
-    target_dir = '/root/autodl-tmp/ennet/datasets/FiveK/test/GT'
+    target_dir = f'/root/autodl-tmp/ennet/datasets/{dataset}/test/GT'
 
     res_names = os.listdir(res_dir)
     target_names = sorted(os.listdir(target_dir))
@@ -35,6 +36,6 @@ def measure(model):
     print(f"model {model}: \npsnr: {psnr:.4f}, ssim: {ssim:.4f}, lpips: {lpips:.4f}\n")
 
 models = ['retinexformer', 'cidnet', 'glare', 'flw', 'lmt', 'lytnet'] # 'flw', 'lmt', 'lytnet'
-models = ['retinexformer', 'cidnet', 'glare']
+models = ['lmt']
 for model in models:
     measure(model)

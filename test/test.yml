@@ -22,24 +22,31 @@ datasets:
     filename_tmpl: '{}' # Template for each filename.
     io_backend:
       type: disk
-    use_cache: false
+    use_cache: true
 
+    # data loader
     use_shuffle: true
     num_worker_per_gpu: 0
     batch_size_per_gpu: 4 # 
+    # iters: [100000]
     dataset_enlarge_ratio: 1
     prefetch_mode: cuda
+    # pin_memory: true 将加载的数据张量固定在CPU内存中以提速，但需要cpu内存足够
+    ### -------------Progressive training---------------------------
     mini_batch_sizes: [4,4,4]
     iters: [30000,30000,30000]
+    # gt_size: 384   # Max patch size for progressive training
+    # gt_sizes: [128,160,192,256,320,384]  # Patch sizes for progressive training.
+    # ### ------------------------------------------------------------
 
   val:
     name: ValSet
     type: Dataset_PairedImage
-    dataroot_gt: /root/autodl-tmp/ennet/datasets/FiveK/test/GT # /root/autodl-tmp/ennet/datasets/LOLv2/Synthetic/Test/Normal
-    dataroot_lq: /root/autodl-tmp/ennet/datasets/FiveK/test/LQ # /root/autodl-tmp/ennet/datasets/LOLv2/Synthetic/Test/Low
+    dataroot_gt: /root/autodl-tmp/ennet/datasets/LOLv2/Synthetic/Test/Normal
+    dataroot_lq: /root/autodl-tmp/ennet/datasets/LOLv2/Synthetic/Test/Low
     io_backend:
       type: disk
-    use_cache: false
+    use_cache: true
 
 
 network_g:

@@ -6,7 +6,7 @@ import lpips
 import torch
 from skimage import img_as_ubyte
 
-Use_GT_mean = True
+Use_GT_mean = False
 
 def calculate_lpips(img1, img2, gt_mean=Use_GT_mean):
     """

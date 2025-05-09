@@ -33,7 +33,13 @@ def parse_options(is_train=True):
     
     args = parser.parse_args()
     opt = parse(args.opt, is_train=is_train)  # parse用的是basicsr的工具，填加了一些参数(root,experiment)
-
+    # gpu_list = ','.join(str(x) for x in args.gpu_id)
+    # os.environ['CUDA_VISIBLE_DEVICES'] = gpu_list
+    # if opt.get('devices', ""):
+    #     os.environ["CUDA_VISIBLE_DEVICES"] = opt['devices']
+    # print('export CUDA_VISIBLE_DEVICES=' + gpu_list)
+    
+    # distributed settings 
     if args.launcher == 'none':
         opt['dist'] = False
         print('Disable distributed.', flush=True)
@@ -91,6 +97,7 @@ def create_train_val_dataloader(opt, logger):
             continue
 
         elif phase == 'val':
+            dataset_opt['use_cache'] = False
             val_set = create_dataset(dataset_opt)
             val_loader = create_dataloader(
                 val_set,
@@ -140,8 +147,8 @@ def main():
 
     current_iter = 0
     start_epoch = 0
-    weight_path = 'experiments/05072338_LOLv2s/models/net_g_90000.pth'
-    # weight_path = 'experiments/05081551_LOLv1/models/net_g_20000.pth'
+    # weight_path = 'experiments/05072338_LOLv2s_nomean/models/net_g_90000.pth'
+    weight_path = 'experiments/05081551_LOLv1/models/net_g_40000.pth'
     checkpoint = torch.load(weight_path)
     model.net_g.load_state_dict(checkpoint['params'])
     best_metric = {'iter': 0}
@@ -150,18 +157,6 @@ def main():
 
     # create message logger (formatted outputs)
     msg_logger = MessageLogger(opt, current_iter, None)
-    # dataloader prefetcher
-    prefetch_mode = opt['datasets']['train'].get('prefetch_mode')    
-    if prefetch_mode is None or prefetch_mode == 'cpu':
-        print('cpu')
-        prefetcher = CPUPrefetcher(train_loader)
-    elif prefetch_mode == 'cuda': # here
-        print('gpu')
-        prefetcher = CUDAPrefetcher(train_loader, opt)
-        logger.info(f'Use {prefetch_mode} prefetch dataloader')
-    else:
-        raise ValueError(f'Wrong prefetch_mode {prefetch_mode}.'
-                         "Supported ones are: None, 'cuda', 'cpu'.")
 
     # training
     logger.info(f'Start training from iter: {current_iter}')
@@ -174,32 +169,18 @@ def main():
 
     epoch = start_epoch
 
-    # loss_val = 0; loss_cnt = 0
-    while current_iter <= total_iters: #一个epoch
-        # print('new epoch, current_iter {} , total_iters {}'.format(current_iter, total_iters))
-        train_sampler.set_epoch(epoch)
-        prefetcher.reset()
-        train_data = prefetcher.next() #lq,hqs(小波变换过)
-        sum_data_time = 0; sum_iter_time = 0
-        while train_data is not None: #一个batch
-            rgb2bgr = opt['val'].get('rgb2bgr', True)
-            # wheather use uint8 image to compute metrics
-            use_image = opt['val'].get('use_image', True)
-            
-            current_metric = model.validation(val_loader, current_iter, None,
-                                                opt['val']['save_img'], rgb2bgr, use_image)
-            
-            # log cur metric to csv file
-            logger_metric = get_root_logger(logger_name='metric')
-            metric_str = f'{current_iter}'
-            for metric, value in current_metric.items():
-                metric_str += f', {value:.4f}'
-            logger_metric.info(metric_str)
-            exit(0)
-
-        # end of iter
-        epoch += 1
-    # end of epoch
+    rgb2bgr = opt['val'].get('rgb2bgr', True)
+    use_image = opt['val'].get('use_image', True)
+    
+    current_metric = model.validation(val_loader, current_iter, None,
+                                        opt['val']['save_img'], rgb2bgr, use_image)
+    
+    logger_metric = get_root_logger(logger_name='metric')
+    metric_str = f'{current_iter}'
+    for metric, value in current_metric.items():
+        metric_str += f', {value:.4f}'
+    logger_metric.info(metric_str)
+    exit(0)
 
     consumed_time = str(datetime.timedelta(seconds=int(time.time() - start_time)))
     logger.info(f'End of training. Time consumed: {consumed_time}')

@@ -33,7 +33,7 @@ datasets:
     prefetch_mode: cuda
     # pin_memory: true 将加载的数据张量固定在CPU内存中以提速，但需要cpu内存足够
     ### -------------Progressive training---------------------------
-    mini_batch_sizes: [4,4,4]
+    mini_batch_sizes: [4,2,1]
     iters: [30000,30000,30000]
     # gt_size: 384   # Max patch size for progressive training
     # gt_sizes: [128,160,192,256,320,384]  # Patch sizes for progressive training.
